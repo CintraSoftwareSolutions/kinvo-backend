@@ -1,0 +1,14 @@
+# State holds generated secrets in plain text. Never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+
+# Real values. terraform.tfvars.example is the committed template.
+terraform.tfvars
+*.auto.tfvars
+
+# Saved plans embed generated secrets in plaintext. Never commit.
+tfplan
+*.tfplan

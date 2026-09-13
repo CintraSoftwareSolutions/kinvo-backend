@@ -1,0 +1,19 @@
+-- Adds the `call` notification category (Batch 14).
+--
+-- WHAT WAS REMOVED FROM THIS FILE, and why it must stay removed:
+--
+-- `prisma migrate dev` also generated four statements dropping the PostGIS GIST
+-- indexes on profiles, venues, emergency_events and live_location_pings. That is
+-- not drift. Those columns are `Unsupported("geography")` in schema.prisma
+-- because Prisma cannot model them, so Prisma cannot see their indexes either
+-- and reads every one as something to remove.
+--
+-- Applying those drops would have cost nothing at migrate time and turned every
+-- radius query into a sequential scan — the deck builder, venue search and the
+-- safety trail all go through them. A silent full-table scan on the hottest
+-- query in the product.
+--
+-- This is the hazard CLAUDE.md flags under Migrations: hand-written spatial DDL
+-- must be re-applied, or in this case retained, whenever a migration is
+-- generated. Always read generated SQL before applying it.
+ALTER TYPE "notification_category" ADD VALUE 'call';

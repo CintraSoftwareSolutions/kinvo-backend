@@ -1,0 +1,11 @@
+# The governing specification. Never reformatted — it is the source of truth and
+# should only ever change when the product owner changes it.
+KINVO_BACKEND_BUILD.md
+
+dist
+coverage
+node_modules
+src/generated
+package-lock.json
+prisma/migrations
+docs/openapi.yaml

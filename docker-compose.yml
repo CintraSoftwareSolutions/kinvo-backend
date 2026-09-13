@@ -1,0 +1,88 @@
+name: kinvo
+
+services:
+  postgres:
+    # PostGIS is required from Batch 1 for radius queries on the Discover deck
+    # (spec 2). The plain postgres image will not do.
+    image: postgis/postgis:16-3.4
+    container_name: kinvo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kinvo
+      POSTGRES_PASSWORD: kinvo
+      POSTGRES_DB: kinvo_dev
+    ports:
+      # Non-default host port so this never collides with a local Postgres.
+      - '5433:5432'
+    volumes:
+      - kinvo_postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kinvo -d kinvo_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kinvo-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6380:6379'
+    volumes:
+      - kinvo_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3 for local development and tests.
+  #
+  # MinIO speaks the S3 API, so the application uses the real AWS SDK against it
+  # and nothing about the upload, presigning, or bucket-policy code is a stub.
+  # Moving to AWS S3 is a change of endpoint and credentials in .env — no code
+  # change. This is not a substitution of the stack (spec 2); it is the same
+  # client pointed somewhere local.
+  minio:
+    image: minio/minio:latest
+    container_name: kinvo-minio
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: kinvo
+      MINIO_ROOT_PASSWORD: kinvo-dev-secret
+    ports:
+      # 9000 is the S3 API, 9001 the web console for eyeballing uploads.
+      - '9100:9000'
+      - '9101:9001'
+    volumes:
+      - kinvo_minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  # One-shot: creates the buckets and locks them down, then exits.
+  minio-init:
+    image: minio/mc:latest
+    container_name: kinvo-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 kinvo kinvo-dev-secret;
+      mc mb --ignore-existing local/kinvo-media;
+      mc mb --ignore-existing local/kinvo-verification;
+      mc anonymous set none local/kinvo-media;
+      mc anonymous set none local/kinvo-verification;
+      echo 'buckets ready: kinvo-media (private), kinvo-verification (private)';
+      "
+
+volumes:
+  kinvo_postgres_data:
+  kinvo_redis_data:
+  kinvo_minio_data:

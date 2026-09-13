@@ -1,0 +1,16 @@
+# Normalise line endings. Development happens on Windows; CI, Docker images, and
+# the EC2 host are Linux. Without this, every file churns on checkout and diffs
+# become unreadable.
+* text=auto eol=lf
+
+# Binary — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+
+# Generated; keep out of diff noise and language statistics.
+package-lock.json linguist-generated=true -diff
+docs/openapi.yaml linguist-generated=true

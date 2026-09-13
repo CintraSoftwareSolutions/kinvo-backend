@@ -1,0 +1,14 @@
+Docs: mark the original payment-rails decision superseded
+
+DECISIONS.md 1.1 still listed Apple StoreKit 2, Google Play Billing and Stripe
+as the payment rails, in a table headed "do not re-ask" -- directly
+contradicting 1.2o, where payments left this codebase entirely.
+
+Struck through rather than deleted. That table records what the SPECIFICATION
+said, and a reader comparing the two documents should be able to see that it
+changed rather than wonder which one is stale.
+
+Also carries an identity scrub of the audit trail made outside this session,
+and closes the blank line it left behind.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>

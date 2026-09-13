@@ -1,0 +1,556 @@
+{
+  "kinvo_realtime": "1.0",
+  "api_version": "v1",
+  "transport": "socket.io",
+  "url": "https://dm9o5kgscmnxv.cloudfront.net",
+  "path": "/socket.io",
+  "authentication": {
+    "description": "Pass the access token in the Socket.IO handshake auth object: io(url, { auth: { token } }). An Authorization: Bearer header works too, for tools that cannot set handshake auth.",
+    "example": {
+      "auth": {
+        "token": "<access_token>"
+      }
+    },
+    "errors": {
+      "AUTH_REQUIRED": "No token was supplied.",
+      "AUTH_TOKEN_EXPIRED": "Refresh the token and reconnect. Do not sign the user out.",
+      "AUTH_TOKEN_INVALID": "Sign the user out.",
+      "ACCOUNT_SUSPENDED": "The account is suspended.",
+      "ONBOARDING_INCOMPLETE": "Finish onboarding first. An un-onboarded account has no matches, so there is nothing to receive."
+    },
+    "note": "The error code arrives on the connect_error event as error.data.code."
+  },
+  "guarantees": {
+    "durability": "Persist first, then emit. Every server event describes something already committed. A dropped socket costs a refresh, never a message — refetch over REST after a reconnect and nothing is lost.",
+    "delivery": "At-most-once, best effort. There is no acknowledgement or replay. Do not treat an emit as a write.",
+    "ordering": "Per socket, events arrive in the order the server sent them. Across reconnects, order is not guaranteed — sort by created_at.",
+    "rooms": "You are joined to your own user room automatically, so events reach every device you have open. Typing indicators require sending typing:start, which joins the conversation room for the thread you have on screen."
+  },
+  "events": [
+    {
+      "event": "typing:start",
+      "direction": "client_to_server",
+      "description": "Tell the other participant you are typing. Not persisted.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "typing:stop",
+      "direction": "client_to_server",
+      "description": "Stop the indicator. Also sent automatically by the server when you send a message, so the client does not have to.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "conversation:read",
+      "direction": "client_to_server",
+      "description": "Mark a conversation read. Does exactly what POST /conversations/{id}/read does, through the socket you already have open.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "presence:ping",
+      "direction": "client_to_server",
+      "description": "Keeps last_active_at fresh while the app is open but idle. Once a minute is plenty.",
+      "payload": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "message:new",
+      "direction": "server_to_client",
+      "description": "A message was persisted in one of your conversations. Identical shape to the REST message object.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sender_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image",
+              "video",
+              "voice_note",
+              "venue_card"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "media_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "venue_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "moderation_flagged": {
+            "type": "boolean"
+          },
+          "moderation_overridden": {
+            "type": "boolean"
+          },
+          "read_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "sender_id",
+          "type",
+          "body",
+          "media_url",
+          "venue_id",
+          "duration_ms",
+          "moderation_flagged",
+          "moderation_overridden",
+          "read_at",
+          "created_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "message:read",
+      "direction": "server_to_client",
+      "description": "The other participant read the thread. Update your ticks.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reader_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "read_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "reader_id",
+          "read_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "typing",
+      "direction": "server_to_client",
+      "description": "Someone in a conversation started or stopped typing. Ephemeral.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_typing": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "user_id",
+          "is_typing"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "match:new",
+      "direction": "server_to_client",
+      "description": "A mutual like just created a match, in one specific mode.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "match_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "dating",
+              "study_buddy",
+              "networking",
+              "trading",
+              "foodie",
+              "cuddle",
+              "pet_dates",
+              "fitness"
+            ]
+          },
+          "is_super_like": {
+            "type": "boolean"
+          },
+          "matched_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "nullable": true
+              },
+              "primary_photo_url": {
+                "type": "string",
+                "nullable": true
+              },
+              "is_verified": {
+                "type": "boolean"
+              },
+              "is_premium": {
+                "type": "boolean"
+              },
+              "is_online": {
+                "type": "boolean"
+              },
+              "last_active_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "display_name",
+              "age",
+              "primary_photo_url",
+              "is_verified",
+              "is_premium",
+              "is_online",
+              "last_active_at"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "match_id",
+          "conversation_id",
+          "mode",
+          "is_super_like",
+          "matched_at",
+          "expires_at",
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "conversation:updated",
+      "direction": "server_to_client",
+      "description": "Unread count or last message changed. Update the row without refetching the list.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unread_count": {
+            "type": "integer"
+          },
+          "last_message_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_message_preview": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "conversation_id",
+          "unread_count",
+          "last_message_at",
+          "last_message_preview"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "presence:update",
+      "direction": "server_to_client",
+      "description": "Someone you have an active match with came online or went offline. Never sent across a block.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_online": {
+            "type": "boolean"
+          },
+          "last_active_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "is_online",
+          "last_active_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "entitlements:updated",
+      "direction": "server_to_client",
+      "description": "The plan changed. Re-read GET /me/entitlements rather than trusting a cached matrix.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "call:incoming",
+      "direction": "server_to_client",
+      "description": "Someone you matched with is calling. Handle this before anything else — it is what rings the phone. The matching push notification carries the same call_id; treat both as one call. Answer with POST /calls/{id}/answer to get a room token.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "match_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "dating",
+              "study_buddy",
+              "networking",
+              "trading",
+              "foodie",
+              "cuddle",
+              "pet_dates",
+              "fitness"
+            ]
+          },
+          "from": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "nullable": true
+              },
+              "primary_photo_url": {
+                "type": "string",
+                "nullable": true
+              },
+              "is_verified": {
+                "type": "boolean"
+              },
+              "is_premium": {
+                "type": "boolean"
+              },
+              "is_online": {
+                "type": "boolean"
+              },
+              "last_active_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "display_name",
+              "age",
+              "primary_photo_url",
+              "is_verified",
+              "is_premium",
+              "is_online",
+              "last_active_at"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "call_id",
+          "match_id",
+          "mode",
+          "from"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "call:answered",
+      "direction": "server_to_client",
+      "description": "The callee picked up. Stop the ringing UI and join the room with the token you already hold.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "call_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "call:declined",
+      "direction": "server_to_client",
+      "description": "The callee refused. Separate from call:ended on purpose.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "call_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "call:ended",
+      "direction": "server_to_client",
+      "description": "The call is over — the other side hung up, or a safety action ended it. duration_seconds is null for a call that was never answered.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "call_id",
+          "duration_seconds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "event": "error",
+      "direction": "server_to_client",
+      "description": "Something went wrong with an event you sent. Uses the same error codes as the REST API.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

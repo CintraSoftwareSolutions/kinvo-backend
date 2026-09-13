@@ -1,0 +1,134 @@
+# Continuous integration for the Kinvo API.
+#
+# WHY THIS EXISTS. The suite needs a real Postgres with PostGIS, a real Redis,
+# and a real S3 — it mocks external HTTP at the provider boundary and nothing
+# below it. That is the right design and it makes the suite heavy: roughly
+# thirty-five minutes and several gigabytes of working set.
+#
+# A developer laptop is a bad place to depend on that. This project has already
+# lost time to three separate host failures that had nothing to do with the
+# code: an application-control policy blocking a native module, a WSL VM that
+# died silently, and an 8 GB machine paging so hard that a single TRUNCATE
+# timed out after sixty seconds. Each produced failures that looked like bugs.
+#
+# Running here instead makes a green suite a property of the commit rather than
+# of whoever ran it. It also matches staging: Linux, same Postgres image.
+#
+# NO CREDENTIALS ARE NEEDED. Twilio, Google, Apple, Firebase and SES are all
+# behind provider interfaces that fall back to stubs without keys, and payments
+# are not in this codebase at all.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # One run per ref. A superseded run is cancelled rather than left to compete
+  # for the same runner minutes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      # The same image docker-compose uses. A plain postgres image would pass
+      # most of the suite and fail every spatial test, because the schema
+      # declares geography columns and GIST indexes PostGIS has to provide.
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: kinvo
+          POSTGRES_PASSWORD: kinvo
+          POSTGRES_DB: kinvo_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U kinvo"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # tests/setup.ts prefers TEST_DATABASE_URL and refuses to let a stray
+      # DATABASE_URL point a truncating suite at a real database.
+      TEST_DATABASE_URL: postgresql://kinvo:kinvo@localhost:5433/kinvo_test
+      REDIS_URL: redis://localhost:6380
+      S3_ENDPOINT: http://localhost:9100
+      S3_FORCE_PATH_STYLE: 'true'
+      S3_ACCESS_KEY_ID: kinvo
+      S3_SECRET_ACCESS_KEY: kinvo-dev-secret
+      S3_MEDIA_BUCKET: kinvo-media
+      S3_VERIFICATION_BUCKET: kinvo-verification
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # MinIO is started as a step rather than a service container, because a
+      # service container cannot override the image's command and MinIO needs
+      # `server /data`. The media tests exercise real presigning against it —
+      # the SDK and the private-bucket policy are not faked.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9100:9000 \
+            -e MINIO_ROOT_USER=kinvo \
+            -e MINIO_ROOT_PASSWORD=kinvo-dev-secret \
+            minio/minio:latest server /data
+
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9100/minio/health/live; then break; fi
+            sleep 2
+          done
+
+          docker run --rm --network host minio/mc:latest sh -c '
+            mc alias set local http://localhost:9100 kinvo kinvo-dev-secret &&
+            mc mb --ignore-existing local/kinvo-media &&
+            mc mb --ignore-existing local/kinvo-verification
+          '
+
+      - run: npm ci
+
+      # Explicit rather than relying on the postinstall, so a failure here is
+      # legible instead of surfacing as a missing module later.
+      - run: npx prisma generate
+
+      # A green suite is not a green build: ts-jest only compiles the files a
+      # test imports, so a module nothing imports yet can be committed broken.
+      # This has happened on this project.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # --runInBand, and one database for this job alone. Suites share a
+      # database and truncate between tests, so two concurrent test processes
+      # produce deadlocks in the entitlement seed and truncations landing
+      # mid-test. Never point two jobs at one instance.
+      - name: Test
+        run: npm test
+
+      - name: Verify the production image builds
+        run: docker build -t kinvo-api:ci .

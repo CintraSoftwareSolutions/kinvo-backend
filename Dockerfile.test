@@ -1,0 +1,40 @@
+# Test runner (Batch 13).
+#
+# WHY THIS EXISTS. Windows Smart App Control began refusing to execute unsigned
+# native binaries on the development host: first Prisma's schema engine, then
+# argon2's binding, at which point the suite could not start at all. Neither is
+# a project problem, and neither is worth weakening a machine's security policy
+# to work around — Smart App Control cannot be turned back on without
+# reinstalling Windows.
+#
+# Running the suite on Linux sidesteps it, and has the better property of
+# matching CI and production rather than one laptop.
+#
+# Deliberately NO build toolchain. argon2 and Prisma both ship linux-x64
+# prebuilds, so python3/make/g++ only added several minutes of apt-get for
+# compilers nothing ends up using.
+#
+# Dependencies are installed INSIDE the image rather than mounted: node_modules
+# on the host holds win32 binaries a Linux container cannot load.
+
+FROM node:24-bookworm-slim
+
+# Prisma needs openssl at runtime. Everything else has a prebuild.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copied before the source so a source edit does not invalidate the install
+# layer — the difference between a fast run and a full reinstall.
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+COPY prisma.config.ts tsconfig.json ./
+
+# Scripts ARE allowed here, unlike the production image: node-gyp-build needs
+# them to fetch the linux-x64 prebuild for argon2. This is a throwaway test
+# container with no secrets and no network exposure.
+RUN npm ci && npx prisma generate
+
+CMD ["npx", "jest", "--runInBand"]

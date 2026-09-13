@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is git-ignored.
+
+# REQUIRED — no default, because this sets the latency floor for every request
+# the app will ever make and cannot be changed without rebuilding everything.
+#
+#   ap-south-1     Mumbai     ~40-60ms from Pakistan
+#   me-central-1   UAE        ~30-50ms from Pakistan
+#   eu-west-2      London     ~120ms
+#   us-east-1      Virginia   ~250-300ms, cheapest
+aws_region = "ap-south-1"
+
+environment = "staging"
+
+# t4g.small is 2 vCPU / 2 GB. t4g.micro cannot hold Node plus Postgres.
+instance_type = "t4g.small"
+
+# Leave empty to serve HTTPS on a CloudFront hostname with no domain.
+# Set it once you own one, and Caddy handles TLS end to end.
+domain_name = ""
+
+# SSH stays closed; administration goes through SSM Session Manager, which
+# needs no open port and logs every session. Only set this if you truly need
+# direct SSH, and then to a single address: "203.0.113.4/32".
+# admin_cidr = "203.0.113.4/32"

@@ -1,0 +1,29 @@
+# Never copied into the build context.
+#
+# .env is the important one: it holds real secrets and must reach the container
+# as runtime environment variables, never baked into an image layer where
+# anyone who can pull the image can read it.
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+coverage
+src/generated
+.git
+.github
+*.log
+
+# Local development only — the production image runs the API alone.
+docker-compose.yml
+docker/
+
+# Not needed at runtime.
+tests
+docs
+infra
+*.md
+!README.md
+.vscode
+.idea
