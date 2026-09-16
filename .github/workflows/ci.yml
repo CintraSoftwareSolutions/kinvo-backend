@@ -113,11 +113,17 @@ jobs:
             sleep 2
           done
 
-          docker run --rm --network host quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z sh -c '
-            mc alias set local http://localhost:9100 kinvo kinvo-dev-secret &&
-            mc mb --ignore-existing local/kinvo-media &&
-            mc mb --ignore-existing local/kinvo-verification
-          '
+          # `mc` IS this image's entrypoint, so a shell command line is read as
+          # an mc subcommand: passing `sh -c '...'` fails with "sh is not a
+          # recognized command". MC_HOST_<alias> names the server from the
+          # environment instead — no shell, and nothing to persist, which suits
+          # a container that is thrown away after one command.
+          for bucket in kinvo-media kinvo-verification; do
+            docker run --rm --network host \
+              -e MC_HOST_local=http://kinvo:kinvo-dev-secret@localhost:9100 \
+              quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \
+              mb --ignore-existing "local/$bucket"
+          done
 
       - run: npm ci
 
