@@ -45,8 +45,12 @@ services:
   # Moving to AWS S3 is a change of endpoint and credentials in .env — no code
   # change. This is not a substitution of the stack (spec 2); it is the same
   # client pointed somewhere local.
+  # From quay.io, MinIO's own registry, and pinned: `docker.io/minio/minio`
+  # no longer exists, and a pull of it fails with "repository does not exist",
+  # which reads like a login problem and is not one. The pin also holds this at
+  # the last release that still ships the web console below.
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: kinvo-minio
     restart: unless-stopped
     command: ['server', '/data', '--console-address', ':9001']
@@ -67,7 +71,7 @@ services:
 
   # One-shot: creates the buckets and locks them down, then exits.
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
     container_name: kinvo-minio-init
     depends_on:
       minio:

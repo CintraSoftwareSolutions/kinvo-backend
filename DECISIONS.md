@@ -815,6 +815,33 @@ The suite could not be run on the machine this was written on — it needs
 Postgres and Redis from `docker compose`, and Docker is not installed there — so
 `npm test` is unrun on these changes and must pass before deploy.
 
+### 2026-09-16 — CI broke on a dependency nobody changed
+
+The build failed before it reached a single test:
+
+    docker: Error response from daemon: pull access denied for minio/minio,
+    repository does not exist or may require 'docker login'
+
+Nothing in the repository had changed about MinIO. **`docker.io/minio/minio` no
+longer exists** — the Docker Hub repository now 404s, and Docker reports a
+missing public repository the same way it reports a private one, so the message
+sends you looking for credentials that were never needed.
+
+quay.io is MinIO's own registry and where the images have always been published.
+CI and `docker-compose.yml` now pull from there, **pinned** rather than
+`:latest`:
+
+- `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z`
+- `quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z`
+
+Pinned for two reasons. This is the second way a moving tag can break a build
+with no commit behind it, and the release after this one removes the web console
+that `docker-compose.yml` exposes on 9101 — so `:latest` would have quietly
+taken the console away from local development as well.
+
+Both tags were checked against quay's registry API before being written in; both
+pull anonymously.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

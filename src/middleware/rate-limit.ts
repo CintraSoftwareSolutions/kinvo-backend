@@ -152,7 +152,6 @@ export const passwordResetRateLimit = build({
   message: 'Too many reset requests. Please check your inbox and try again later.',
 });
 
-
 export const passwordResetConfirmRateLimit = build({
   name: 'password-reset-confirm',
   windowMs: 15 * 60 * 1000,

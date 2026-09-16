@@ -1,7 +1,6 @@
 import { env } from '@config/env';
 import type { EmailMessage } from '@/providers/email.provider';
 
-
 /** "45 minutes", "1 hour", "2 hours" — whatever the configured TTL comes to. */
 function formatValidity(minutes: number): string {
   if (minutes % 60 !== 0) {

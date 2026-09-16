@@ -89,20 +89,31 @@ jobs:
       # service container cannot override the image's command and MinIO needs
       # `server /data`. The media tests exercise real presigning against it —
       # the SDK and the private-bucket policy are not faked.
+      # MinIO is pulled from quay.io, NOT Docker Hub, and pinned.
+      #
+      # `docker.io/minio/minio` stopped existing: the repository now 404s, and
+      # a pull fails with "pull access denied ... repository does not exist",
+      # which reads like a credentials problem and is not one. quay.io is
+      # MinIO's own registry and is where the images have always been published.
+      #
+      # Pinned rather than :latest because this is the second way this
+      # dependency can break the build without anyone changing a line of code —
+      # and because the release after this one drops the web console the compose
+      # file exposes.
       - name: Start MinIO
         run: |
           docker run -d --name minio \
             -p 9100:9000 \
             -e MINIO_ROOT_USER=kinvo \
             -e MINIO_ROOT_PASSWORD=kinvo-dev-secret \
-            minio/minio:latest server /data
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
 
           for i in $(seq 1 30); do
             if curl -sf http://localhost:9100/minio/health/live; then break; fi
             sleep 2
           done
 
-          docker run --rm --network host minio/mc:latest sh -c '
+          docker run --rm --network host quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z sh -c '
             mc alias set local http://localhost:9100 kinvo kinvo-dev-secret &&
             mc mb --ignore-existing local/kinvo-media &&
             mc mb --ignore-existing local/kinvo-verification
