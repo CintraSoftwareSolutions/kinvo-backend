@@ -30,6 +30,10 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   JWT_REFRESH_SECRET: 'a-sufficiently-long-refresh-secret-for-tests-002',
   // Production refuses a wildcard, and this must exercise the production path.
   CORS_ORIGINS: 'https://admin.kinvo.app',
+  // Production also demands a mail transport. That rule has its own test in
+  // config.test.ts; this file is about which provider the waiver selects, and
+  // tripping over an unrelated rule here would say nothing about that.
+  SES_SENDER_ADDRESS: 'no-reply@kinvo.app',
 };
 
 const TWILIO_CREDENTIALS: NodeJS.ProcessEnv = {

@@ -23,6 +23,9 @@ const PRODUCTION_CREDENTIALS: NodeJS.ProcessEnv = {
   CORS_ORIGINS: 'https://admin.kinvo.app',
   S3_ACCESS_KEY_ID: 'AKIAEXAMPLE',
   S3_SECRET_ACCESS_KEY: 'example-secret',
+  // Password reset is emailed, so a transport is part of a complete production
+  // environment. See "demands a way to send email in production" below.
+  SES_SENDER_ADDRESS: 'no-reply@kinvo.app',
   // Defaults on for development; production refuses it. See the test below.
 };
 
@@ -95,6 +98,44 @@ describe('environment validation (spec 7, Batch 0)', () => {
     expect(() =>
       parseEnv({ ...VALID, ...PRODUCTION_CREDENTIALS, NODE_ENV: 'production' }),
     ).not.toThrow();
+  });
+
+  it('demands a way to send email in production', () => {
+    // Password reset is the reason. Its response is identical whether or not
+    // the address is registered — it has to be, or it becomes a way to test
+    // which addresses have accounts — so an environment with no transport
+    // cannot report the failure. It looks healthy while every reset goes
+    // nowhere, and the first report comes from a locked-out user.
+    const noMail: NodeJS.ProcessEnv = {
+      ...VALID,
+      ...PRODUCTION_CREDENTIALS,
+      NODE_ENV: 'production',
+    };
+    delete noMail.SES_SENDER_ADDRESS;
+
+    expect(() => parseEnv(noMail)).toThrow(EnvValidationError);
+
+    // SMTP satisfies it instead, for an environment that is not on AWS.
+    const smtp: NodeJS.ProcessEnv = {
+      ...noMail,
+      SMTP_HOST: 'smtp.example.com',
+      SMTP_USER: 'kinvo',
+      SMTP_PASSWORD: 'smtp-secret',
+      SMTP_FROM: 'no-reply@kinvo.app',
+    };
+
+    expect(() => parseEnv(smtp)).not.toThrow();
+
+    // Three of the four is not a transport: a half-configured one fails at
+    // send time, which is the worst place to find out.
+    const partialSmtp = { ...smtp };
+    delete partialSmtp.SMTP_FROM;
+
+    expect(() => parseEnv(partialSmtp)).toThrow(EnvValidationError);
+
+    // The waiver still lets staging run without one, where the code comes back
+    // in the response instead.
+    expect(() => parseEnv({ ...noMail, REQUIRE_THIRD_PARTY_INTEGRATIONS: 'false' })).not.toThrow();
   });
 
   it('names which production credential is missing', () => {
