@@ -516,9 +516,19 @@ model RefreshToken {
 
 /// spec §7 Batch 2: single-use, one-hour expiry.
 model PasswordResetToken {
-  id         String    @id @default(uuid(4)) @db.Uuid
-  user_id    String    @db.Uuid
-  token_hash String    @unique
+  id      String @id @default(uuid(4)) @db.Uuid
+  user_id String @db.Uuid
+
+  /// sha256 of the six-digit code. Deliberately NOT unique: a code is only
+  /// ever looked up alongside the account it belongs to, and two accounts
+  /// holding the same six digits at the same time is ordinary, not a clash.
+  token_hash String
+
+  /// Wrong guesses against this code. Six digits are guessable in a way a
+  /// 256-bit token never was, so the code dies after a handful of attempts
+  /// (PASSWORD_RESET_MAX_ATTEMPTS) rather than living out its full hour.
+  attempts Int @default(0)
+
   expires_at DateTime
   used_at    DateTime?
   created_at DateTime  @default(now())

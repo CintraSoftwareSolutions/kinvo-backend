@@ -71,9 +71,11 @@ export const logoutSchema = refreshSchema;
 export const forgotPasswordSchema = z.object({ email });
 
 export const resetPasswordSchema = z.object({
-  token: z
-    .string({ required_error: 'A reset token is required.' })
-    .min(1, 'A reset token is required.'),
+  email,
+  code: z
+    .string({ required_error: 'Enter the 6-digit code from your email.' })
+    .trim()
+    .regex(/^\d{6}$/, 'Enter the 6-digit code from your email.'),
   password,
 });
 

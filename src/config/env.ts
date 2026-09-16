@@ -68,8 +68,9 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
   JWT_ISSUER: z.string().min(1).default('kinvo'),
 
-  /// spec §7 Batch 2: password reset tokens are single-use with a one-hour expiry.
+  /// spec §7 Batch 2: password reset codes are single-use with a one-hour expiry.
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
+  PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
 
   // --- External identity providers ----------------------------------------
   // Optional so development and tests boot without third-party credentials;
@@ -302,6 +303,18 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): Env {
         issues[key] = [message];
       }
     }
+    const smtpConfigured = Boolean(
+      result.data.SMTP_HOST &&
+      result.data.SMTP_USER &&
+      result.data.SMTP_PASSWORD &&
+      result.data.SMTP_FROM,
+    );
+
+    if (!result.data.SES_SENDER_ADDRESS && !smtpConfigured) {
+      issues.SES_SENDER_ADDRESS = [
+        'required in production to deliver password reset email, or set SMTP_HOST, SMTP_USER, SMTP_PASSWORD and SMTP_FROM instead',
+      ];
+    }
   }
 
   if (result.data.NODE_ENV === 'production') {
@@ -326,22 +339,4 @@ export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
 export const isTest = env.NODE_ENV === 'test';
 
-/**
- * Must a missing third-party credential be fatal?
- *
- * Providers MUST test this rather than `isProduction`. The two are not the same
- * thing on a deployed environment that has taken the integration waiver:
- * `REQUIRE_THIRD_PARTY_INTEGRATIONS=false` is what lets staging run without
- * Twilio, Google or Apple accounts, and the waiver's whole point is that those
- * features degrade instead of the API refusing to serve.
- *
- * Getting this wrong is not theoretical. Both the OTP provider and the video
- * provider branched on `isProduction` alone, so on staging — production
- * NODE_ENV, waiver on — they threw a raw Error and the endpoint answered 500
- * rather than falling back to its stub. Phone sign-in was broken there from
- * Batch 2 and nobody noticed, because nothing exercised it against staging.
- *
- * Real production leaves this variable at its default of `true`, so the hard
- * stop still fires where it matters.
- */
 export const thirdPartyIntegrationsRequired = isProduction && env.REQUIRE_THIRD_PARTY_INTEGRATIONS;

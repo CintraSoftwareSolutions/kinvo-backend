@@ -83,12 +83,12 @@ describe('account takeover via registration', () => {
     // Password reset proves mailbox control, so it is allowed to set the first
     // password on a social-created account.
     const forgot = await api.post(`${AUTH_BASE}/forgot-password`).send({ email });
-    const token = forgot.body.data.reset_token as string;
-    expect(token).toEqual(expect.any(String));
+    const code = forgot.body.data.reset_code as string;
+    expect(code).toMatch(/^\d{6}$/);
 
     const reset = await api
       .post(`${AUTH_BASE}/reset-password`)
-      .send({ token, password: TEST_PASSWORD });
+      .send({ email, code, password: TEST_PASSWORD });
     expect(reset.status).toBe(200);
 
     const login = await api.post(`${AUTH_BASE}/login`).send({ email, password: TEST_PASSWORD });

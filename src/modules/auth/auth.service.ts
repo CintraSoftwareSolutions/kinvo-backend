@@ -4,10 +4,13 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { assertAdult, calculateAge } from '@utils/age';
 import { logger } from '@utils/logger';
 import type { AuthMeResponse, AuthTokens } from './auth.types';
+import { getEmailProvider } from '@modules/notifications/providers';
+import { passwordResetEmail } from './auth.emails';
 import {
-  consumePasswordResetToken,
-  createPasswordResetToken,
+  consumePasswordResetCode,
+  createPasswordResetCode,
   hashPassword,
+  invalidResetCode,
   simulatePasswordVerification,
   verifyPassword,
 } from './password.service';
@@ -132,13 +135,13 @@ export async function login(input: LoginInput): Promise<AuthTokens> {
   return issueTokenPair(identity.user.id, { deviceId: input.device_id });
 }
 
-/**
- * spec §7 Batch 2: password reset tokens are single-use with a one-hour expiry.
- *
- * Returns the token so the caller can email it (Batch 11 wires the mailer). The
- * endpoint's response never varies on whether the address exists.
- */
-export async function requestPasswordReset(rawEmail: string): Promise<string | null> {
+export interface PasswordResetRequest {
+  code: string;
+  /** False when no mail transport is configured, or the provider rejected it. */
+  delivered: boolean;
+}
+
+export async function requestPasswordReset(rawEmail: string): Promise<PasswordResetRequest | null> {
   const email = normaliseEmail(rawEmail);
 
   const identity = await prisma.authIdentity.findUnique({
@@ -147,24 +150,42 @@ export async function requestPasswordReset(rawEmail: string): Promise<string | n
   });
 
   if (!identity || identity.user.deleted_at) {
+    await simulatePasswordVerification();
     return null;
   }
 
-  const { token } = await createPasswordResetToken(identity.user.id);
-  return token;
+  const { code } = await createPasswordResetCode(identity.user.id);
+
+  // Delivery, never the record. The provider logs and swallows its own
+  // failures, and a rejected email must not fail the request: the code is
+  // already issued, and the user can ask for another.
+  const delivered = await getEmailProvider().send(passwordResetEmail(email, code));
+
+  logger.info({ user_id: identity.user.id, delivered }, 'password reset code issued');
+
+  return { code, delivered };
 }
 
-export async function resetPassword(rawToken: string, newPassword: string): Promise<void> {
-  const userId = await consumePasswordResetToken(rawToken);
+export async function resetPassword(
+  rawEmail: string,
+  code: string,
+  newPassword: string,
+): Promise<void> {
+  const email = normaliseEmail(rawEmail);
 
-  const identity = await prisma.authIdentity.findFirst({
-    where: { user_id: userId, provider: 'email' },
-    select: { id: true },
+  const identity = await prisma.authIdentity.findUnique({
+    where: { provider_identifier: { provider: 'email', identifier: email } },
+    select: { id: true, user: { select: { id: true, deleted_at: true } } },
   });
 
-  if (!identity) {
-    throw new ApiError(ERROR_CODES.AUTH_TOKEN_INVALID, 'That reset link is no longer valid.');
+  // An address with no account fails exactly as a wrong code does, at the same
+  // cost, or this endpoint answers the question forgot-password refuses to.
+  if (!identity || identity.user.deleted_at) {
+    await simulatePasswordVerification();
+    throw invalidResetCode();
   }
+
+  await consumePasswordResetCode(identity.user.id, code);
 
   await prisma.authIdentity.update({
     where: { id: identity.id },
@@ -173,9 +194,9 @@ export async function resetPassword(rawToken: string, newPassword: string): Prom
 
   // A reset usually means the account was compromised, so every existing
   // session dies with it. The user signs in again with the new password.
-  await revokeAllTokensForUser(userId);
+  await revokeAllTokensForUser(identity.user.id);
 
-  logger.info({ user_id: userId }, 'password reset completed, all sessions revoked');
+  logger.info({ user_id: identity.user.id }, 'password reset completed, all sessions revoked');
 }
 
 export async function changePassword(

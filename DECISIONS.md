@@ -398,9 +398,9 @@ Verified clean, no change needed: no secrets in any commit; no `console.*` in `s
 
 Accepted risks, recorded rather than fixed:
 
-- `forgot-password` returns the reset token in the response body outside production, so the flow is testable before email lands in Batch 11. **Staging must run `NODE_ENV=production`**, or reset tokens are exposed.
+- ~~`forgot-password` returns the reset token in the response body outside production, so the flow is testable before email lands in Batch 11. **Staging must run `NODE_ENV=production`**, or reset tokens are exposed.~~ Closed 2026-09-16: the endpoint emails a six-digit code, and hands it back only where there is no mail transport at all — which `NODE_ENV` alone never decided correctly, since staging runs as production on purpose. See the entry for that date.
 - `display_name` is stored verbatim, including markup. Correct for a Flutter client that renders text, but the admin web console must escape on output (Batch 15).
-- `resetPassword` resolves the email identity with `findFirst`. Unambiguous today because the linking rules give a user at most one email identity; it would become ambiguous if that ever changes.
+- ~~`resetPassword` resolves the email identity with `findFirst`. Unambiguous today because the linking rules give a user at most one email identity; it would become ambiguous if that ever changes.~~ Closed 2026-09-16: it now looks the identity up by the address the request names, which is unique by construction.
 - **Account deletion does not scrub personal data.** `DELETE /users/me` soft-deletes, revokes every session, and removes the user from every read path, but email, phone, display name, and bio are retained in full. Reports, moderation history, and evidence retention all reference the user, and deciding what must survive an erasure request is a safety question Batch 12 answers. **This is a GDPR exposure until then** — recorded deliberately rather than discovered later, and it must be closed before real users exist.
 - Refresh rotation is not transactional, so two simultaneous refreshes can both succeed and leave two live chains in one family. Replay detection still works; worth a row lock if it ever shows up in practice.
 
@@ -747,6 +747,73 @@ endpoints across 102 paths) and `docs/realtime.json` (16 socket events). They
 are committed on purpose: a generated contract in the repository turns renaming
 an error code or dropping an endpoint into a visible diff, rather than
 something a client discovers at runtime.
+
+### 2026-09-16 — Password reset: delivery, and a code instead of a link
+
+Requested by PO while integrating the Flutter app, which found the flow dead
+end to end.
+
+**Nothing was ever emailed.** `requestPasswordReset` returned the token with a
+comment saying Batch 11 would wire the mailer; Batch 11 built the mailer and
+wired it to notifications only. The response body carried the token outside
+production, and staging runs `NODE_ENV=production` deliberately, so on the only
+deployed environment the endpoint answered "a reset link is on its way" and
+nothing was on its way. No test could see it: every one of them ran in
+`NODE_ENV=test`, where the token came back in the body.
+
+**A six-digit code, not a link (PO decision).** An https link has to be claimed
+by the app, which needs a verified domain hosting `assetlinks.json` and an
+Apple app-site-association file, and on Android the release signing key's
+fingerprint. The app has none of those yet — its id is still
+`com.example.kinvo`. A `kinvo://` scheme link needs none of it but can be
+claimed by any app on the device, and several mail clients refuse to open one.
+A code the user reads also survives the common case of the email arriving on a
+different device from the app.
+
+**What the code being low-entropy changed.** A 256-bit token could be looked up
+by hash across the whole table and needed no guess counting. Six digits can be
+neither:
+
+- The code is hashed with **argon2**, not sha256. A sha256 of six digits is a
+  million-entry rainbow table; anything that could read the row — a dump, a
+  backup, a replica — could redeem every outstanding reset.
+- It is looked up **against one account**, the one the address in the request
+  resolves to, never by hash alone. Six digits collide across users constantly,
+  and a global lookup would let a caller who knows no address at all walk into
+  whichever account shared their guess. `POST /auth/reset-password` therefore
+  takes `{ email, code, password }`.
+- Wrong guesses are counted on the row and the code is destroyed after
+  `PASSWORD_RESET_MAX_ATTEMPTS` (default 5), so it does not live out its hour
+  as a target.
+- `passwordResetConfirmRateLimit` is now keyed on the address, not the IP.
+  Every request from the app arrives through one CloudFront distribution, so an
+  IP key is one shared bucket: someone grinding codes spends everyone's
+  allowance, and the people locked out are the ones trying to get back in.
+
+**Production now refuses to boot without a mail transport** (SES sender, or all
+four SMTP variables). The endpoint cannot report undeliverable mail — its
+response is identical whether or not the address is registered, precisely so it
+cannot be used to enumerate accounts — so a deployment with no transport looks
+healthy while every reset goes nowhere. The integration waiver still lets
+staging run without one; there, and in development and tests, the code comes
+back as `reset_code`, which is what the suite and the app's staging build use.
+
+**Migration `20260916094500_password_reset_codes`.** Drops the unique index on
+`token_hash`, adds `attempts`, and retires every outstanding row: they hold
+hashes of link tokens the new endpoint has no way to accept.
+
+**Still open, for the PO.** `app.set('trust proxy', 1)` is one hop short of the
+deployed chain — CloudFront, then Caddy, then Node — so `req.ip` is the
+CloudFront address on every request. Every IP-keyed limiter is therefore one
+shared bucket, registration's ten an hour included. Reset no longer depends on
+it, but sign-up still does. The fix is a `TRUST_PROXY_HOPS` setting rather than
+a constant 2, because a deployment with a domain has one proxy fewer and
+trusting a hop that is not there is what makes `X-Forwarded-For` spoofable.
+
+**Verified:** typecheck, lint and format clean; `docs/openapi.yaml` re-exported.
+The suite could not be run on the machine this was written on — it needs
+Postgres and Redis from `docker compose`, and Docker is not installed there — so
+`npm test` is unrun on these changes and must pass before deploy.
 
 ## 3. Batch plan and dependencies
 

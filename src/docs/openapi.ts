@@ -147,9 +147,9 @@ export const ROUTES: RouteDoc[] = [
     method: 'post',
     path: '/auth/forgot-password',
     tag: 'Auth',
-    summary: 'Request a password reset',
+    summary: 'Request a password reset code',
     description:
-      'The response is identical whether or not the address is registered. Outside production the reset token is returned in the body so the flow is testable before email delivery exists.',
+      'Emails a six-digit code, single use, valid for an hour. Requesting a new code retires the previous one. The response is identical whether or not the address is registered, so it cannot be used to find out which addresses have accounts. An environment with no mail transport — local, test, and staging under the integration waiver — returns the code as reset_code instead, so the flow stays testable there; production refuses to boot without a transport, so it never does.',
     body: authSchema.forgotPasswordSchema,
     auth: false,
     errors: [E.VALIDATION_FAILED, E.RATE_LIMITED],
@@ -158,8 +158,9 @@ export const ROUTES: RouteDoc[] = [
     method: 'post',
     path: '/auth/reset-password',
     tag: 'Auth',
-    summary: 'Redeem a reset token',
-    description: 'Single use, one-hour expiry. Revokes every existing session on success.',
+    summary: 'Redeem a reset code',
+    description:
+      'Takes the address the code was sent to along with the code itself. Single use, one-hour expiry, and the code is destroyed after a handful of wrong guesses. Every way of failing — wrong, expired, already used, out of attempts, unknown address — answers AUTH_TOKEN_INVALID with one message. Revokes every existing session on success, so the app signs in again with the new password.',
     body: authSchema.resetPasswordSchema,
     auth: false,
     errors: [E.VALIDATION_FAILED, E.AUTH_TOKEN_INVALID, E.RATE_LIMITED],

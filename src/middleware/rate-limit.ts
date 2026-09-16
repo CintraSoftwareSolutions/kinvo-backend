@@ -152,14 +152,13 @@ export const passwordResetRateLimit = build({
   message: 'Too many reset requests. Please check your inbox and try again later.',
 });
 
-/**
- * Redeeming a reset token. The tokens carry 256 bits of entropy so guessing is
- * not the threat; this bounds the damage from a caller grinding the endpoint.
- */
+
 export const passwordResetConfirmRateLimit = build({
   name: 'password-reset-confirm',
   windowMs: 15 * 60 * 1000,
   limit: 10,
+  key: bodyField('email'),
+  message: 'Too many attempts. Please wait a few minutes and try again.',
 });
 
 /**

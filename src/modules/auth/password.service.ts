@@ -1,13 +1,14 @@
+import { randomInt } from 'node:crypto';
+
 import argon2 from 'argon2';
 
 import { env, isTest } from '@config/env';
 import { prisma } from '@/db/prisma';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
-import { generateSecureToken, sha256 } from '@utils/hash';
 
 /**
- * Password hashing and reset tokens (spec §2, §7 Batch 2).
+ * Password hashing and reset codes (spec §2, §7 Batch 2).
  */
 
 /**
@@ -70,20 +71,18 @@ export async function simulatePasswordVerification(): Promise<void> {
   await argon2.hash('timing-equalisation-placeholder', ARGON2_OPTIONS);
 }
 
-export interface ResetTokenIssue {
-  /** Emailed to the user. Never stored. */
-  token: string;
+export interface ResetCodeIssue {
+  /** Emailed to the user. Never stored, never logged. */
+  code: string;
   expires_at: Date;
 }
 
-/**
- * spec §7 Batch 2: single-use, one-hour expiry.
- *
- * Any outstanding tokens are invalidated first — requesting a new reset must
- * retire the previous link, or an intercepted older email stays usable.
- */
-export async function createPasswordResetToken(userId: string): Promise<ResetTokenIssue> {
-  const token = generateSecureToken();
+function generateResetCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+export async function createPasswordResetCode(userId: string): Promise<ResetCodeIssue> {
+  const code = generateResetCode();
   const expiresAt = new Date(Date.now() + env.PASSWORD_RESET_TTL_MINUTES * 60 * 1000);
 
   await prisma.$transaction([
@@ -92,42 +91,81 @@ export async function createPasswordResetToken(userId: string): Promise<ResetTok
       data: { used_at: new Date() },
     }),
     prisma.passwordResetToken.create({
-      data: { user_id: userId, token_hash: sha256(token), expires_at: expiresAt },
+      data: { user_id: userId, token_hash: await hashPassword(code), expires_at: expiresAt },
     }),
   ]);
 
-  return { token, expires_at: expiresAt };
+  return { code, expires_at: expiresAt };
 }
 
 /**
- * Validates and consumes a reset token, returning the user it belongs to.
+ * Validates and consumes a reset code.
+ *
+ * The code is looked up against ONE account — the one the email in the request
+ * resolved to — never by hash across the table. Six digits collide across
+ * users constantly, and a global lookup would let a caller who knows no email
+ * address at all walk into whichever account happened to share their guess.
  *
  * Consumption is a conditional update rather than a read-then-write, so two
- * simultaneous requests cannot both succeed with the same token.
+ * simultaneous requests cannot both succeed with the same code.
  */
-export async function consumePasswordResetToken(rawToken: string): Promise<string> {
-  const stored = await prisma.passwordResetToken.findUnique({
-    where: { token_hash: sha256(rawToken) },
+export async function consumePasswordResetCode(userId: string, code: string): Promise<void> {
+  const outstanding = await prisma.passwordResetToken.findFirst({
+    where: {
+      user_id: userId,
+      used_at: null,
+      expires_at: { gt: new Date() },
+      attempts: { lt: env.PASSWORD_RESET_MAX_ATTEMPTS },
+    },
+    orderBy: { created_at: 'desc' },
   });
 
-  if (!stored || stored.used_at || stored.expires_at.getTime() <= Date.now()) {
-    throw new ApiError(
-      ERROR_CODES.AUTH_TOKEN_INVALID,
-      'That reset link is no longer valid. Please request a new one.',
-    );
+  if (!outstanding) {
+    // Equalises the cost with a real verification below, so the response time
+    // does not say whether a code is outstanding for this account.
+    await simulatePasswordVerification();
+    throw invalidResetCode();
+  }
+
+  if (!(await verifyPassword(outstanding.token_hash, code))) {
+    const { attempts } = await prisma.passwordResetToken.update({
+      where: { id: outstanding.id },
+      data: { attempts: { increment: 1 } },
+      select: { attempts: true },
+    });
+
+    // Out of guesses: destroy the code rather than leave it alive for the rest
+    // of its hour. The user asks for a new one, which costs an attacker a
+    // fresh email they cannot read.
+    if (attempts >= env.PASSWORD_RESET_MAX_ATTEMPTS) {
+      await prisma.passwordResetToken.updateMany({
+        where: { id: outstanding.id, used_at: null },
+        data: { used_at: new Date() },
+      });
+    }
+
+    throw invalidResetCode();
   }
 
   const consumed = await prisma.passwordResetToken.updateMany({
-    where: { id: stored.id, used_at: null },
+    where: { id: outstanding.id, used_at: null },
     data: { used_at: new Date() },
   });
 
   if (consumed.count === 0) {
-    throw new ApiError(
-      ERROR_CODES.AUTH_TOKEN_INVALID,
-      'That reset link is no longer valid. Please request a new one.',
-    );
+    throw invalidResetCode();
   }
+}
 
-  return stored.user_id;
+/**
+ * One message for every way a code can fail — wrong, expired, already used, out
+ * of attempts, or never issued. Telling them apart tells a caller which
+ * accounts have a reset in flight, and tells an attacker grinding codes whether
+ * they are getting closer.
+ */
+export function invalidResetCode(): ApiError {
+  return new ApiError(
+    ERROR_CODES.AUTH_TOKEN_INVALID,
+    'That code is wrong or has expired. Please request a new one.',
+  );
 }

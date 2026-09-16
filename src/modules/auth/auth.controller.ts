@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { isProduction } from '@config/env';
+import { thirdPartyIntegrationsRequired } from '@config/env';
 import { CLIENT_HEADERS } from '@config/constants';
 import { requireUser } from '@middleware/authenticate';
 import { registerDevice } from '@modules/settings/devices.service';
@@ -91,28 +91,30 @@ export async function logout(req: Request, res: Response): Promise<void> {
 
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
   const { email } = req.body as { email: string };
-  const token = await authService.requestPasswordReset(email);
+  const request = await authService.requestPasswordReset(email);
 
   // The response never varies on whether the address is registered, or this
   // endpoint becomes an account-enumeration oracle.
-  //
-  // Email delivery arrives in Batch 11. Until then the token is returned
-  // outside production so the flow is testable end to end; `isProduction`
-  // guarantees it can never leak to real users.
   const payload: Record<string, unknown> = {
-    message: 'If that address has an account, a reset link is on its way.',
+    message: 'If that address has an account, a reset code is on its way.',
   };
 
-  if (!isProduction && token) {
-    payload.reset_token = token;
+  // Nowhere to send it: local development, the test suite, and staging under
+  // the integration waiver all run without a mail transport, and without this
+  // the flow cannot be exercised there at all. Real production refuses to boot
+  // without a transport (config/env.ts), and `thirdPartyIntegrationsRequired`
+  // is what tells the two apart — `isProduction` alone does not, because
+  // staging runs with NODE_ENV=production on purpose.
+  if (request && !thirdPartyIntegrationsRequired && !request.delivered) {
+    payload.reset_code = request.code;
   }
 
   sendSuccess(res, payload);
 }
 
 export async function resetPassword(req: Request, res: Response): Promise<void> {
-  const { token, password } = req.body as ResetPasswordBody;
-  await authService.resetPassword(token, password);
+  const { email, code, password } = req.body as ResetPasswordBody;
+  await authService.resetPassword(email, code, password);
   sendSuccess(res, { password_reset: true });
 }
 
