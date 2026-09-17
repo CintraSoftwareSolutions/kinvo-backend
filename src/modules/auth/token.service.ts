@@ -141,6 +141,14 @@ export async function revokeAllTokensForUser(userId: string): Promise<void> {
   });
 }
 
+/** A session's tokens, with who and which device they belong to. */
+export interface SessionTokens {
+  tokens: AuthTokens;
+  userId: string;
+  /** Null for a session started before the app sent its device id. */
+  deviceId: string | null;
+}
+
 /**
  * Exchanges a refresh token for a new pair.
  *
@@ -149,7 +157,7 @@ export async function revokeAllTokensForUser(userId: string): Promise<void> {
  * family — the legitimate user and the attacker both hold tokens from that
  * chain, and there is no way to tell which is which, so neither may continue.
  */
-export async function rotateRefreshToken(rawToken: string): Promise<AuthTokens> {
+export async function rotateRefreshToken(rawToken: string): Promise<SessionTokens> {
   const payload = verifyRefreshToken(rawToken);
   const stored = await prisma.refreshToken.findUnique({
     where: { token_hash: sha256(rawToken) },
@@ -185,7 +193,7 @@ export async function rotateRefreshToken(rawToken: string): Promise<AuthTokens> 
     data: { revoked_at: new Date(), replaced_by_id: successorId },
   });
 
-  return tokens;
+  return { tokens, userId: stored.user_id, deviceId: stored.device_id };
 }
 
 /**
@@ -195,15 +203,21 @@ export async function rotateRefreshToken(rawToken: string): Promise<AuthTokens> 
  * Never reveals whether the token was valid: sign-out succeeds regardless, and
  * a caller learning "that token was real" from an error would be a small oracle.
  */
-export async function revokeRefreshToken(rawToken: string): Promise<void> {
+export async function revokeRefreshToken(
+  rawToken: string,
+): Promise<{ userId: string; deviceId: string | null } | null> {
   const stored = await prisma.refreshToken.findUnique({
     where: { token_hash: sha256(rawToken) },
-    select: { family_id: true },
+    select: { family_id: true, user_id: true, device_id: true },
   });
 
-  if (stored) {
-    await revokeFamily(stored.family_id);
+  if (!stored) {
+    return null;
   }
+
+  await revokeFamily(stored.family_id);
+
+  return { userId: stored.user_id, deviceId: stored.device_id };
 }
 
 /** Housekeeping for the Batch 7 scheduler; harmless to call at any time. */

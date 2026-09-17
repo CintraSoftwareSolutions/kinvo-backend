@@ -915,6 +915,64 @@ flagged, and a socket test asserts the live copy does.
 **Verified:** typecheck, lint and format clean. The tests run in CI; this
 machine has no Docker to run them locally.
 
+### 2026-09-17 — Push notifications: what connecting the app turned up
+
+Found while connecting the app to push notifications. Five fixes, one commit.
+
+**Only email log-in recorded the device.** `POST /notifications/tokens` refuses
+a device that isn't recorded ("That device is not signed in"), and devices were
+recorded in the `login` controller alone. Every account that signed up, or
+signed in with a phone number, Google or Apple, could never register for push.
+The same sessions were missing from the device list, so they couldn't be signed
+out from another phone either. The OTP and social routes also bound the refresh
+token only to a `device_id` in the body, ignoring the header the app sends on
+every request.
+
+**Fix:** the controller resolves the device once per sign-in (body, else
+`X-Device-Id`) for both the refresh token and the Device row, and every
+sign-in route records it. `POST /auth/refresh` records it too, which keeps
+last-seen and app version current and gives sessions started before this fix
+their device on their next refresh — no data migration needed.
+
+**Signing out left the phone receiving pushes.** `POST /auth/logout` revoked
+the refresh token family and nothing else, so the device's FCM token stayed
+registered and the account's message previews kept arriving on a phone nobody
+was signed in to. **Fix:** logout clears that device's push token, best effort
+like the rest of sign-out. The app also removes it before signing out, while it
+still can.
+
+**Muting a conversation changed nothing.** `is_muted` was stored and never
+read. **Fix:** a message to someone who muted the conversation creates no
+notification — no push, no feed entry. The message itself is delivered and
+counted unread as before.
+
+**Reading a conversation left its message notifications unread.** Every
+message creates a `new_message` feed entry, and nothing marked those read when
+the conversation was, so the notifications badge — and the iOS app icon badge,
+which is pushed from that count — only ever grew. **Fix:** marking a
+conversation read also marks its `new_message` notifications read, in the same
+transaction.
+
+**A match notification couldn't open its conversation.** Its data carried the
+match id only, so the app needed a request before it could open the chat.
+**Fix:** it carries `conversation_id` as well. The `match:new` socket event
+already did.
+
+**`notification:new` was emitted but not in the contract.** The service
+emitted it with a string literal, which the realtime docs drift test can't see.
+It is now in `SERVER_EVENTS` with a schema and description, so it's published
+with the rest.
+
+**Tests:** sign-up, phone and Google sign-in record the device (sign-up then
+registers a push token); refresh records a missing device and updates its app
+version; logout clears the push token; a muted conversation creates no
+notification but still counts unread; reading a conversation marks only its
+message notifications read; a match notification carries its conversation; the
+socket delivers `notification:new`.
+
+**Verified:** typecheck, lint and format clean. The tests run in CI; this
+machine has no Docker to run them locally.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

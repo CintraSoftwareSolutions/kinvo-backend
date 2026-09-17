@@ -1,5 +1,6 @@
 import { MatchStatus, type NotificationCategory, type Prisma, prisma } from '@/db/prisma';
 import { emitToUser } from '@/realtime/emit';
+import { SERVER_EVENTS } from '@/realtime/events';
 import { ApiError } from '@utils/api-error';
 import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
@@ -135,7 +136,7 @@ export async function notify(input: CreateNotificationInput): Promise<Notificati
 
   // Socket first — a connected client updates instantly and needs no push.
   if (preferences.inApp) {
-    emitToUser(input.userId, 'notification:new', view);
+    emitToUser(input.userId, SERVER_EVENTS.NOTIFICATION_NEW, view);
   }
 
   if (preferences.push) {

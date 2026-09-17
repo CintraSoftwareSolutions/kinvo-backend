@@ -20,6 +20,29 @@ async function refresh(token: string) {
 }
 
 describe('POST /auth/refresh', () => {
+  it("keeps the session's device recorded and up to date", async () => {
+    const { email } = await createAuthenticatedUser();
+    const login = await api
+      .post(`${AUTH_BASE}/login`)
+      .set('X-Device-Id', 'phone-1')
+      .set('X-Platform', 'ios')
+      .set('X-App-Version', '1.0.0+1')
+      .send({ email, password: 'correct horse battery staple' });
+
+    // As a session that started before every sign-in recorded its device.
+    await prisma.device.deleteMany({ where: { device_id: 'phone-1' } });
+
+    const response = await api
+      .post(`${AUTH_BASE}/refresh`)
+      .set('X-Platform', 'ios')
+      .set('X-App-Version', '1.1.0+2')
+      .send({ refresh_token: login.body.data.refresh_token });
+
+    expect(response.status).toBe(200);
+    const device = await prisma.device.findFirstOrThrow({ where: { device_id: 'phone-1' } });
+    expect(device.app_version).toBe('1.1.0+2');
+  });
+
   it('exchanges a refresh token for a new pair', async () => {
     const { tokens } = await createAuthenticatedUser();
 

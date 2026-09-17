@@ -176,6 +176,29 @@ describe('message delivery', () => {
     await disconnectClient(recipient);
   });
 
+  it('announces the notification it creates, live', async () => {
+    const { a, b, conversation_id } = await matchPair(Mode.dating);
+    const recipient = await connectClient(b.tokens);
+
+    const announced = nextEvent<{ category: string; title: string; read_at: string | null }>(
+      recipient,
+      SERVER_EVENTS.NOTIFICATION_NEW,
+    );
+
+    await api
+      .post(`${API_PREFIX}/conversations/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'ping' });
+
+    expect(await announced).toMatchObject({
+      category: 'new_message',
+      title: 'Alex',
+      read_at: null,
+    });
+
+    await disconnectClient(recipient);
+  });
+
   it('persists the message even when nobody is connected', async () => {
     const { a, conversation_id } = await matchPair(Mode.dating);
 

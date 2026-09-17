@@ -511,7 +511,7 @@ export async function sendMessage(
 
     const recipientState = await prisma.conversationState.findFirst({
       where: { conversation_id: conversationId, user_id: recipientId },
-      select: { unread_count: true },
+      select: { unread_count: true, is_muted: true },
     });
 
     emitConversationUpdated(recipientId, {
@@ -523,15 +523,20 @@ export async function sendMessage(
 
     const sender = participantFor(conversation, recipientId);
 
-    await notify({
-      userId: recipientId,
-      category: 'new_message',
-      title: sender.display_name,
-      // The preview, not the body: a media message has no text, and a very long
-      // message should not arrive as a wall of text in a banner.
-      body: previewFor(input.type, input.body ?? null),
-      data: { conversation_id: conversationId, match_id: conversation.match_id },
-    });
+    // Muting a conversation is the recipient saying "not about this one". The
+    // message still arrives and still counts as unread; it just announces
+    // nothing — no push, and nothing in the notifications feed.
+    if (!recipientState?.is_muted) {
+      await notify({
+        userId: recipientId,
+        category: 'new_message',
+        title: sender.display_name,
+        // The preview, not the body: a media message has no text, and a very
+        // long message should not arrive as a wall of text in a banner.
+        body: previewFor(input.type, input.body ?? null),
+        data: { conversation_id: conversationId, match_id: conversation.match_id },
+      });
+    }
 
     return view;
   } catch (error) {
@@ -557,6 +562,19 @@ export async function markRead(viewerId: string, conversationId: string): Promis
     prisma.conversationState.updateMany({
       where: { conversation_id: conversationId, user_id: viewerId },
       data: { last_read_at: now, unread_count: 0 },
+    }),
+    // The feed told the viewer about these messages. Once the conversation is
+    // read, so are those notifications — otherwise the notification badge, and
+    // the app icon badge pushed from it, counts messages already read and only
+    // ever grows.
+    prisma.notification.updateMany({
+      where: {
+        user_id: viewerId,
+        category: 'new_message',
+        read_at: null,
+        data: { path: ['conversation_id'], equals: conversationId },
+      },
+      data: { read_at: now },
     }),
     // Read receipts are per message so the sender can render ticks. Scoped to
     // messages the viewer did NOT send: marking your own as read is meaningless

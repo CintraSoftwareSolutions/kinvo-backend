@@ -344,7 +344,13 @@ async function announceMatch(match: MatchModel, actorId: string, targetId: strin
       category: 'new_match',
       title: 'It is a match!',
       body: `You and ${otherUser.display_name} liked each other.`,
-      data: { match_id: match.id, mode: match.mode, user_id: other },
+      // The conversation too, so tapping the notification opens it directly.
+      data: {
+        match_id: match.id,
+        ...(conversation ? { conversation_id: conversation.id } : {}),
+        mode: match.mode,
+        user_id: other,
+      },
     });
   }
 }

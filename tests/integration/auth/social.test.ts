@@ -55,6 +55,25 @@ describe('POST /auth/google', () => {
     expect(identity.user.display_name).toBe('Sarah Chen');
   });
 
+  it('records the device it signed in on', async () => {
+    const token = fakeIdToken({
+      subject: 'google-subject-device',
+      email: 'device.user@example.com',
+      email_verified: true,
+      name: 'Dev Ice',
+    });
+
+    const response = await api
+      .post(`${AUTH_BASE}/google`)
+      .set('X-Device-Id', 'phone-google')
+      .set('X-Platform', 'android')
+      .send({ id_token: token });
+
+    expect(response.status).toBe(201);
+    const device = await prisma.device.findFirstOrThrow({ where: { device_id: 'phone-google' } });
+    expect(device.platform).toBe('android');
+  });
+
   it('returns the same user on a second sign-in', async () => {
     const token = fakeIdToken({
       subject: 'google-subject-2',

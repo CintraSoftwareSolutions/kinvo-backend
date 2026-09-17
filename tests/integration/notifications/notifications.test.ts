@@ -271,6 +271,29 @@ describe('POST /notifications/tokens', () => {
     expect(fresh.fcm_token).toBe('shared-token');
   });
 
+  it('stops pushing to a device that signs out', async () => {
+    const { email } = await createAuthenticatedUser();
+    const login = await api
+      .post(`${API_PREFIX}/auth/login`)
+      .set('X-Device-Id', 'shared-phone')
+      .set('X-Platform', 'android')
+      .send({ email, password: 'correct horse battery staple' });
+
+    await api
+      .post(`${NOTIFICATIONS}/tokens`)
+      .set('Authorization', `Bearer ${login.body.data.access_token}`)
+      .send({ device_id: 'shared-phone', fcm_token: 'fcm-shared' });
+
+    await api
+      .post(`${API_PREFIX}/auth/logout`)
+      .send({ refresh_token: login.body.data.refresh_token });
+
+    // Otherwise the account's message previews keep arriving on a phone
+    // nobody is signed in to.
+    const device = await prisma.device.findFirstOrThrow({ where: { device_id: 'shared-phone' } });
+    expect(device.fcm_token).toBeNull();
+  });
+
   it('unregisters without ending the session', async () => {
     const { user_id, tokens } = await createAuthenticatedUser();
     await prisma.device.create({
@@ -480,6 +503,17 @@ describe('notifications from real events', () => {
     expect(forB[0]?.body).toContain('Alex');
   });
 
+  it('points a match notification at its conversation', async () => {
+    const { b, conversation_id } = await matchPair(Mode.dating);
+
+    const forB = await prisma.notification.findFirstOrThrow({
+      where: { user_id: b.user_id, category: 'new_match' },
+    });
+
+    // Tapping it opens the conversation directly.
+    expect(forB.data).toMatchObject({ conversation_id });
+  });
+
   it('tells the recipient about a message, titled with the sender', async () => {
     const { a, b, conversation_id } = await matchPair(Mode.dating);
 
@@ -492,6 +526,42 @@ describe('notifications from real events', () => {
     expect(forB).toHaveLength(1);
     expect(forB[0]?.title).toBe('Alex');
     expect(forB[0]?.body).toBe('hello there');
+  });
+
+  it('announces nothing for a conversation the recipient muted', async () => {
+    const { a, b, conversation_id } = await matchPair(Mode.dating);
+    await api
+      .patch(`${API_PREFIX}/conversations/${conversation_id}`)
+      .set(authHeader(b.tokens))
+      .send({ is_muted: true });
+
+    const response = await sendText(a, conversation_id, 'are you there?');
+
+    expect(response.status).toBe(201);
+    expect(
+      await prisma.notification.count({ where: { user_id: b.user_id, category: 'new_message' } }),
+    ).toBe(0);
+    // Still delivered, and still unread.
+    const state = await prisma.conversationState.findFirstOrThrow({
+      where: { conversation_id, user_id: b.user_id },
+    });
+    expect(state.unread_count).toBe(1);
+  });
+
+  it("reading a conversation marks its message notifications read, and no one else's", async () => {
+    const { a, b, conversation_id } = await matchPair(Mode.dating);
+    await sendText(a, conversation_id, 'one');
+    await sendText(a, conversation_id, 'two');
+    await notify({ userId: b.user_id, category: 'system', title: 'Hello', body: 'Still unread.' });
+
+    await api.post(`${API_PREFIX}/conversations/${conversation_id}/read`).set(authHeader(b.tokens));
+
+    const unread = await prisma.notification.findMany({
+      where: { user_id: b.user_id, read_at: null },
+      select: { category: true },
+    });
+    // The match notification and the system one stay; the messages are read.
+    expect(unread.map((row) => row.category).sort()).toEqual(['new_match', 'system']);
   });
 
   it('does not notify the sender about their own message', async () => {

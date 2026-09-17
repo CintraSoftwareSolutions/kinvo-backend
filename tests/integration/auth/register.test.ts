@@ -2,6 +2,7 @@ import { prisma } from '@/db/prisma';
 import { verifyPassword } from '@modules/auth/password.service';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { AUTH_BASE, TEST_PASSWORD } from '../../helpers/auth';
+import { API_PREFIX } from '@config/constants';
 import { api, expectErrorEnvelope, expectSuccessEnvelope } from '../../helpers/request';
 import { uniqueEmail } from '../../helpers/factories';
 
@@ -19,6 +20,36 @@ function validBody(overrides: Record<string, unknown> = {}) {
 }
 
 describe('POST /auth/register', () => {
+  it('records the device it signed up on, so push can be registered at once', async () => {
+    const response = await api
+      .post(`${AUTH_BASE}/register`)
+      .set('X-Device-Id', 'new-phone')
+      .set('X-Platform', 'android')
+      .set('X-App-Version', '1.0.0+1')
+      .send(validBody());
+
+    expect(response.status).toBe(201);
+
+    const device = await prisma.device.findFirstOrThrow({ where: { device_id: 'new-phone' } });
+    expect(device.platform).toBe('android');
+    expect(device.app_version).toBe('1.0.0+1');
+
+    // Recording the device at log-in only once left every new account unable
+    // to register for push: this answered 404, "That device is not signed in".
+    const push = await api
+      .post(`${API_PREFIX}/notifications/tokens`)
+      .set('Authorization', `Bearer ${response.body.data.access_token}`)
+      .send({ device_id: 'new-phone', fcm_token: 'fcm-new-phone' });
+
+    expect(push.status).toBe(200);
+
+    // The same id as the session, so revoking the device ends it.
+    const token = await prisma.refreshToken.findFirstOrThrow({
+      where: { user_id: device.user_id },
+    });
+    expect(token.device_id).toBe('new-phone');
+  });
+
   it('creates an account and returns the spec 4.3 token shape', async () => {
     const response = await api.post(`${AUTH_BASE}/register`).send(validBody());
 

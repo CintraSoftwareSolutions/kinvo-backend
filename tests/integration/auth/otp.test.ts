@@ -72,6 +72,23 @@ describe('POST /auth/otp/verify', () => {
     expect(identity.verified_at).not.toBeNull();
   });
 
+  it('records the device it signed in on', async () => {
+    const response = await api
+      .post(`${AUTH_BASE}/otp/verify`)
+      .set('X-Device-Id', 'phone-otp')
+      .set('X-Platform', 'ios')
+      .send({ phone: PHONE, code: VALID_OTP_CODE, display_name: 'Nina' });
+
+    expect(response.status).toBe(201);
+
+    const device = await prisma.device.findFirstOrThrow({ where: { device_id: 'phone-otp' } });
+    expect(device.platform).toBe('ios');
+    const token = await prisma.refreshToken.findFirstOrThrow({
+      where: { user_id: device.user_id },
+    });
+    expect(token.device_id).toBe('phone-otp');
+  });
+
   it('signs an existing number in without creating a second account', async () => {
     await api
       .post(`${AUTH_BASE}/otp/verify`)

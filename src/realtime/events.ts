@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { MessageType, Mode } from '@/db/prisma';
+import { MessageType, Mode, NotificationCategory } from '@/db/prisma';
 
 /**
  * The realtime contract (spec §7, Batch 9).
@@ -52,6 +52,7 @@ export const SERVER_EVENTS = {
   CONVERSATION_UPDATED: 'conversation:updated',
   PRESENCE_UPDATE: 'presence:update',
   ENTITLEMENTS_UPDATED: 'entitlements:updated',
+  NOTIFICATION_NEW: 'notification:new',
   CALL_INCOMING: 'call:incoming',
   CALL_ANSWERED: 'call:answered',
   CALL_DECLINED: 'call:declined',
@@ -143,6 +144,17 @@ export const SERVER_EVENT_SCHEMAS = {
     tier: z.string(),
   }),
 
+  /** A notification was added to the feed. The same shape GET /notifications lists. */
+  [SERVER_EVENTS.NOTIFICATION_NEW]: z.object({
+    id: z.string().uuid(),
+    category: z.nativeEnum(NotificationCategory),
+    title: z.string(),
+    body: z.string(),
+    data: z.record(z.unknown()),
+    read_at: z.string().nullable(),
+    created_at: z.string(),
+  }),
+
   /**
    * Someone you matched with is calling. This is what makes the callee's phone
    * ring, so it is the one event a client must handle before it has fetched
@@ -222,6 +234,8 @@ export const EVENT_DESCRIPTIONS: Record<string, string> = {
     'Someone you have an active match with came online or went offline. Never sent across a block.',
   [SERVER_EVENTS.ENTITLEMENTS_UPDATED]:
     'The plan changed. Re-read GET /me/entitlements rather than trusting a cached matrix.',
+  [SERVER_EVENTS.NOTIFICATION_NEW]:
+    'A notification was added to the feed. Update the badge and the list without refetching. Not sent for categories the user switched off in-app.',
   [SERVER_EVENTS.CALL_INCOMING]:
     'Someone you matched with is calling. Handle this before anything else — it is what rings the phone. The matching push notification carries the same call_id; treat both as one call. Answer with POST /calls/{id}/answer to get a room token.',
   [SERVER_EVENTS.CALL_ANSWERED]:
