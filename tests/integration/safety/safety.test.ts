@@ -70,6 +70,34 @@ describe('POST /reports', () => {
     expect(block).not.toBeNull();
   });
 
+  it('unmatches when it blocks, exactly as blocking does', async () => {
+    const { a, b } = await matchPair(Mode.dating);
+
+    const response = await api
+      .post(REPORTS)
+      .set(authHeader(a.tokens))
+      .send({ reported_id: b.user_id, reason: 'harassment', also_block: true });
+
+    expect(response.status).toBe(201);
+    // Blocking from a report once skipped this, and left the person just
+    // reported sitting in the reporter's matches.
+    const match = await prisma.match.findFirstOrThrow();
+    expect(match.status).toBe('unmatched');
+    expect(match.unmatched_by_id).toBe(a.user_id);
+  });
+
+  it('leaves the match alone when it does not block', async () => {
+    const { a, b } = await matchPair(Mode.dating);
+
+    await api
+      .post(REPORTS)
+      .set(authHeader(a.tokens))
+      .send({ reported_id: b.user_id, reason: 'spam_scam' });
+
+    const match = await prisma.match.findFirstOrThrow();
+    expect(match.status).toBe('active');
+  });
+
   it('rejects reporting yourself', async () => {
     const reporter = await createAuthenticatedUser();
 

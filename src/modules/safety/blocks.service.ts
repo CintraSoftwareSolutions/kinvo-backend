@@ -18,11 +18,18 @@ import { logger } from '@utils/logger';
  */
 
 /**
- * Creates a block inside the caller's transaction.
+ * Blocks someone and severs the relationship, inside the caller's transaction.
  *
  * Takes a transaction client because reporting-with-block has to be atomic
  * (spec §5.7): a report filed without its block, because a write failed in
  * between, leaves someone still exposed to the person they just reported.
+ *
+ * The unmatch lives HERE, not in `block` below, so that every way of blocking
+ * does it. The block alone would hide them from decks and profile views, but an
+ * active match would still sit in both people's lists — visible and frozen,
+ * which is right for a match that lapsed and wrong for one the user
+ * deliberately cut. Reporting with "also block" once skipped it, and left the
+ * person just reported in the reporter's matches.
  *
  * Idempotent — blocking twice is not an error. The user pressed the button
  * again, which is not a state worth an error message.
@@ -37,6 +44,22 @@ export async function blockUser(
     create: { blocker_id: blockerId, blocked_id: blockedId },
     update: {},
   });
+
+  // Both directions: whichever way round the pair sits on the match row.
+  await tx.match.updateMany({
+    where: {
+      status: MatchStatus.active,
+      OR: [
+        { user_a_id: blockerId, user_b_id: blockedId },
+        { user_a_id: blockedId, user_b_id: blockerId },
+      ],
+    },
+    data: {
+      status: MatchStatus.unmatched,
+      unmatched_at: new Date(),
+      unmatched_by_id: blockerId,
+    },
+  });
 }
 
 export interface BlockView {
@@ -45,14 +68,7 @@ export interface BlockView {
   user: UserCompact;
 }
 
-/**
- * Blocks someone and severs the relationship.
- *
- * The block alone would hide them from decks and profile views, but an active
- * match would still sit in both people's lists — visible and frozen, which is
- * right for a match that lapsed and wrong for one the user deliberately cut.
- * Unmatching makes the intent stick.
- */
+/** Blocks someone and severs the relationship (see `blockUser`). */
 export async function block(blockerId: string, blockedId: string): Promise<BlockView> {
   if (blockerId === blockedId) {
     throw ApiError.validation({ user_id: ['You cannot block yourself.'] });
@@ -69,22 +85,6 @@ export async function block(blockerId: string, blockedId: string): Promise<Block
 
   const created = await prisma.$transaction(async (tx) => {
     await blockUser(tx, blockerId, blockedId);
-
-    // Both directions: whichever way round the pair sits on the match row.
-    await tx.match.updateMany({
-      where: {
-        status: MatchStatus.active,
-        OR: [
-          { user_a_id: blockerId, user_b_id: blockedId },
-          { user_a_id: blockedId, user_b_id: blockerId },
-        ],
-      },
-      data: {
-        status: MatchStatus.unmatched,
-        unmatched_at: new Date(),
-        unmatched_by_id: blockerId,
-      },
-    });
 
     return tx.block.findUniqueOrThrow({
       where: { blocker_id_blocked_id: { blocker_id: blockerId, blocked_id: blockedId } },

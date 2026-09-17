@@ -20,7 +20,7 @@ import { ApiError } from '@utils/api-error';
 import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/compact';
 import { decodeCursor, paginate } from '@utils/cursor';
 import { ERROR_CODES } from '@utils/error-codes';
-import { emitConversationUpdated, emitMessage, emitMessageRead } from '@/realtime/emit';
+import { emitConversationUpdated, emitMessage, emitMessageRead, emitTyping } from '@/realtime/emit';
 import type { SendMessageBody } from './chat.schema';
 
 /**
@@ -492,6 +492,16 @@ export async function sendMessage(
     // the request now would tell the user their message did not send when it
     // did.
     emitMessage(recipientId, view);
+
+    // Sending ends typing, and the published contract says the server says so:
+    // clients are told they need not send typing:stop themselves. A client
+    // that trusted that and was never told would show "typing…" under a
+    // message that has already arrived.
+    emitTyping(recipientId, {
+      conversation_id: conversationId,
+      user_id: viewerId,
+      is_typing: false,
+    });
 
     const recipientState = await prisma.conversationState.findFirst({
       where: { conversation_id: conversationId, user_id: recipientId },

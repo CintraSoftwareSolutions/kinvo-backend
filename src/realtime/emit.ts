@@ -83,6 +83,17 @@ export function emitConversationUpdated(userId: string, payload: ConversationUpd
   emitToUser(userId, SERVER_EVENTS.CONVERSATION_UPDATED, payload);
 }
 
+/**
+ * Typing started or stopped. Addressed to the other participant's own room, so
+ * delivery never depends on a conversation join the sender cannot observe.
+ */
+export function emitTyping(
+  recipientId: string,
+  payload: { conversation_id: string; user_id: string; is_typing: boolean },
+): void {
+  emitToUser(recipientId, SERVER_EVENTS.TYPING, payload);
+}
+
 export function emitMessageRead(
   recipientId: string,
   payload: { conversation_id: string; reader_id: string; read_at: string },

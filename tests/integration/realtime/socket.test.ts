@@ -348,6 +348,27 @@ describe('typing indicators', () => {
     await disconnectClient(intruder);
   });
 
+  it('stops when the person typing sends their message', async () => {
+    const { a, b, conversation_id } = await matchPair(Mode.dating);
+    const clientB = await connectClient(b.tokens);
+
+    // The published contract tells clients they need not send typing:stop
+    // after sending, so the server has to.
+    const stopped = nextEvent<{ conversation_id: string; user_id: string; is_typing: boolean }>(
+      clientB,
+      SERVER_EVENTS.TYPING,
+    );
+
+    await api
+      .post(`${API_PREFIX}/conversations/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'here it is' });
+
+    expect(await stopped).toEqual({ conversation_id, user_id: a.user_id, is_typing: false });
+
+    await disconnectClient(clientB);
+  });
+
   it('rejects a malformed payload with the REST error vocabulary', async () => {
     const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
     const client = await connectClient(viewer.tokens);

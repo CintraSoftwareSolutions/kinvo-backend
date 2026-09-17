@@ -866,6 +866,35 @@ the deck alone, also asserted.
 `tests/integration/discovery/deck.test.ts` run in CI; this machine has no
 Docker to run them locally.
 
+### 2026-09-17 — Two gaps found while connecting the app's chat
+
+**Reporting with "also block" left the match standing.** "Blocking unmatches"
+is PO-confirmed (2026-08-28), but only `POST /blocks` did it: the unmatch was
+written inside `block`, and `POST /reports` with `also_block: true` called
+the lower-level `blockUser`, which only wrote the block row. Someone who
+reported harassment and ticked block still had that person in their matches,
+frozen, which is the exact state the decision rules out.
+
+**Fix:** the unmatch moved into `blockUser`, the one function both paths
+share, so no future way of blocking can skip it. Two tests in
+`tests/integration/safety/safety.test.ts`: reporting with the box ticked
+unmatches (and records the reporter as the one who did), and reporting without
+it leaves the match alone.
+
+**The socket contract promised a typing:stop the server never sent.** The
+published description of `typing:stop` says it is "sent automatically by the
+server when you send a message, so the client does not have to". Nothing sent
+it. A client that took the documentation at its word would show "typing…"
+under a message that had already arrived, until the other person typed again.
+
+**Fix:** `sendMessage` now emits `typing` with `is_typing: false` to the
+recipient straight after `message:new`. Typing emits go through a named
+`emitTyping`, as the socket handlers' do now too, so the event name and payload
+live in one place. One socket test asserts the event on send.
+
+**Verified:** typecheck, lint and format clean. The three new tests run in CI;
+this machine has no Docker to run them locally.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

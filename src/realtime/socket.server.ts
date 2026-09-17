@@ -5,7 +5,7 @@ import { env, isProduction } from '@config/env';
 import { logger } from '@utils/logger';
 import { ERROR_CODES } from '@utils/error-codes';
 import { CLIENT_EVENTS, CLIENT_EVENT_SCHEMAS, SERVER_EVENTS } from './events';
-import { broadcastPresence, emitMessageRead, emitToUser, registerSocketServer } from './emit';
+import { broadcastPresence, emitMessageRead, emitTyping, registerSocketServer } from './emit';
 import {
   PRESENCE_HEARTBEAT_SECONDS,
   markOffline,
@@ -198,7 +198,7 @@ function registerHandlers(socket: Socket, userId: string): void {
       return;
     }
 
-    emitToUser(recipient, SERVER_EVENTS.TYPING, {
+    emitTyping(recipient, {
       conversation_id,
       user_id: userId,
       is_typing: isTyping,
