@@ -259,6 +259,77 @@ describe('filters', () => {
     expect(response.body.data).toHaveLength(1);
   });
 
+  it('applies a changed filter today, not from tomorrow', async () => {
+    const viewer = await createDiscoverableViewer({
+      mode: Mode.dating,
+      coordinates: LONDON,
+      radius_metres: 300_000,
+    });
+    const auth = authHeader(viewer.tokens);
+    await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN }); // ~3.7 km
+    await createDiscoverableUser({ mode: Mode.dating, coordinates: MANCHESTER }); // ~262 km
+
+    // Today's deck is built, and precomputed, from the wide radius.
+    const before = await api.get(DECK('dating')).set(auth);
+    expect(before.body.data).toHaveLength(2);
+
+    await api
+      .patch(`${API_PREFIX}/modes/dating`)
+      .set(auth)
+      .send({ radius_metres: 10_000 })
+      .expect(200);
+
+    // Without discarding the precomputed deck, Manchester would still be here
+    // until midnight UTC.
+    const after = await api.get(DECK('dating')).set(auth);
+    expect(after.body.data).toHaveLength(1);
+    expect(after.body.data[0].distance_metres).toBeLessThan(10_000);
+  });
+
+  it('never brings back someone already swiped when the deck is rebuilt', async () => {
+    const viewer = await createDiscoverableViewer({
+      mode: Mode.dating,
+      coordinates: LONDON,
+      radius_metres: 300_000,
+    });
+    const auth = authHeader(viewer.tokens);
+    const { user: passed } = await createDiscoverableUser({
+      mode: Mode.dating,
+      coordinates: CAMDEN,
+    });
+
+    await api.get(DECK('dating')).set(auth);
+    await api
+      .post(`${API_PREFIX}/discovery/dating/swipe`)
+      .set(auth)
+      .send({ target_id: passed.id, action: 'pass' })
+      .expect(201);
+
+    await api.patch(`${API_PREFIX}/modes/dating`).set(auth).send({ min_age: 20 }).expect(200);
+
+    // The rebuild reads the swipes table, so a pass survives the new deck.
+    const after = await api.get(DECK('dating')).set(auth);
+    expect(after.body.data.map((card: { user: { id: string } }) => card.user.id)).not.toContain(
+      passed.id,
+    );
+  });
+
+  it("keeps today's deck when nothing that builds it changes", async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const auth = authHeader(viewer.tokens);
+    await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+
+    await api.get(DECK('dating')).set(auth);
+    const deck = await prisma.deck.findFirstOrThrow({ where: { user_id: viewer.user_id } });
+
+    // Mode-specific extras are not deck inputs; switching the primary flag is
+    // not either. Neither should cost a rebuild.
+    await api.patch(`${API_PREFIX}/modes/dating`).set(auth).send({ preferences: {} }).expect(200);
+
+    const kept = await prisma.deck.findFirst({ where: { id: deck.id } });
+    expect(kept).not.toBeNull();
+  });
+
   it('excludes people outside the age range', async () => {
     const viewer = await createDiscoverableViewer({
       mode: Mode.dating,

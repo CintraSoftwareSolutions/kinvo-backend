@@ -842,6 +842,30 @@ taken the console away from local development as well.
 Both tags were checked against quay's registry API before being written in; both
 pull anonymously.
 
+### 2026-09-17 — Changed filters took effect a day late
+
+Found while connecting the app's Discover filters. `PATCH /modes/{mode}` saved
+a new radius, age range or verified-only setting, and nothing else happened:
+today's deck had already been precomputed from the old filters, and
+`getDeck` only builds a deck when the day has none. Someone who narrowed their
+radius to 5 km kept being shown people 30 km away until midnight UTC, which
+reads as the filter being broken.
+
+**Fix:** `updateMode` now calls `discardTodaysDeck` whenever one of the four
+fields that build a deck is in the request. The next read of the deck builds a
+new one lazily, exactly as a day's first read does, so changing the filters of a
+mode nobody is browsing costs nothing.
+
+Deleting rather than regenerating in place is safe because the deck is not
+where "already swiped" lives. `generateDeck` excludes swiped people using the
+swipes table, so a rebuilt deck never brings back a card the user answered —
+asserted by a test. Mode-specific `preferences` are not deck inputs and leave
+the deck alone, also asserted.
+
+**Verified:** typecheck and lint clean. The three new cases in
+`tests/integration/discovery/deck.test.ts` run in CI; this machine has no
+Docker to run them locally.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

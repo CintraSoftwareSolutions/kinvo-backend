@@ -371,6 +371,31 @@ export async function getDeck(
   };
 }
 
+/**
+ * Throws away today's deck for one mode, so the next read builds a new one.
+ *
+ * For when what the deck is built FROM changes — radius, age range,
+ * verified-only. Decks are precomputed per day, so without this a user who
+ * narrows their radius to 5 km keeps being shown people 30 km away until
+ * midnight UTC, which reads as the filter being broken.
+ *
+ * Deleted rather than regenerated here: the rebuild happens lazily on the next
+ * read, like any day's first read, so changing the filters of a mode the user
+ * is not browsing costs nothing. Consumed entries go with it and nothing is
+ * lost — `generateDeck` keeps already-swiped people out using the swipes
+ * table, never the deck.
+ */
+export async function discardTodaysDeck(
+  userId: string,
+  mode: Mode,
+  now: Date = new Date(),
+): Promise<void> {
+  // Entries cascade with the deck row.
+  await prisma.deck.deleteMany({
+    where: { user_id: userId, mode, deck_date: deckDateFor(now) },
+  });
+}
+
 /** Marks the card as acted upon, so it never returns to the deck. */
 export async function consumeDeckEntry(
   tx: Prisma.TransactionClient,

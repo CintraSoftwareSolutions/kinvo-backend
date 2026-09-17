@@ -5,6 +5,7 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 import { preferenceSchemaFor } from './mode-preferences.schema';
 import type { ModeView, ModesResponse } from './modes.types';
+import { discardTodaysDeck } from '@modules/discovery/deck.service';
 import * as entitlementsService from '@modules/entitlements/entitlements.service';
 import { ENTITLEMENT_KEYS } from '@modules/entitlements/entitlements.types';
 
@@ -202,6 +203,18 @@ export async function updateMode(
     create: { user_id: userId, mode, ...data },
     update: data,
   });
+
+  // Today's deck was built from the old filters. Keeping it would make a new
+  // radius or age range take effect tomorrow instead of now.
+  const changesWhoIsInTheDeck =
+    input.min_age !== undefined ||
+    input.max_age !== undefined ||
+    input.radius_metres !== undefined ||
+    input.verified_only !== undefined;
+
+  if (changesWhoIsInTheDeck) {
+    await discardTodaysDeck(userId, mode);
+  }
 
   // First enabled mode becomes primary; signup picks one (spec §5.2).
   if (input.is_enabled === true) {
