@@ -895,6 +895,26 @@ live in one place. One socket test asserts the event on send.
 **Verified:** typecheck, lint and format clean. The three new tests run in CI;
 this machine has no Docker to run them locally.
 
+### 2026-09-17 — Flagged messages arrived marked unflagged
+
+Found while connecting the app's chat, which shows the recipient a scam warning
+on any message with `moderation_flagged` set. `sendMessage` scans a text
+message after saving it and sets the flag on the row, but then built the
+response and the `message:new` event from the copy it had read before the
+scan. Both said `moderation_flagged: false` for a message the database had
+flagged, so the warning only appeared once the conversation was reloaded,
+which is after the person has already read the message.
+
+**Fix:** the view is built with the flag the scan decided. Nothing else about
+moderation changes: it is still advisory, still after the write, and a scan
+that fails still leaves the message unflagged and delivered.
+
+**Tests:** the existing post-hoc scan test now also asserts the response says
+flagged, and a socket test asserts the live copy does.
+
+**Verified:** typecheck, lint and format clean. The tests run in CI; this
+machine has no Docker to run them locally.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

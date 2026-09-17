@@ -291,6 +291,8 @@ describe('post-hoc scanning', () => {
     const response = await sendText(a, conversation_id, 'send me your seed phrase');
 
     expect(response.status).toBe(201);
+    // The answer says so too, not only the row.
+    expect(response.body.data.moderation_flagged).toBe(true);
 
     const message = await prisma.message.findFirstOrThrow();
     expect(message.moderation_flagged).toBe(true);

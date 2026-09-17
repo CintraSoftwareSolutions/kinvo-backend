@@ -468,6 +468,8 @@ export async function sendMessage(
     // POST /moderation/check — this catches what was sent regardless of whether
     // the client bothered to call it, including anything sent while the
     // provider was down.
+    let flagged = message.moderation_flagged;
+
     if (input.type === 'text' && input.body) {
       const severity = await scanSubject({
         userId: viewerId,
@@ -481,10 +483,14 @@ export async function sendMessage(
           where: { id: message.id },
           data: { moderation_flagged: true },
         });
+        flagged = true;
       }
     }
 
-    const view = await toMessageView(message);
+    // Built from what was just stored, flag included. The row read before the
+    // scan still says unflagged, and the recipient's app shows its scam warning
+    // from this field on the message it is sent live.
+    const view = await toMessageView({ ...message, moderation_flagged: flagged });
 
     // PERSIST FIRST, THEN EMIT (spec §7). This runs after the transaction has
     // committed, so the socket can never announce a message that a rollback

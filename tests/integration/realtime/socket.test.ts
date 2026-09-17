@@ -155,6 +155,27 @@ describe('message delivery', () => {
     await disconnectClient(recipient);
   });
 
+  it('delivers a message moderation flagged as flagged', async () => {
+    const { a, b, conversation_id } = await matchPair(Mode.dating);
+    const recipient = await connectClient(b.tokens);
+
+    const delivered = nextEvent<{ moderation_flagged: boolean }>(
+      recipient,
+      SERVER_EVENTS.MESSAGE_NEW,
+    );
+
+    await api
+      .post(`${API_PREFIX}/conversations/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'send me your seed phrase' });
+
+    // The recipient's app warns about a flagged message as it arrives, so the
+    // flag has to be on the live copy, not only in the database.
+    expect((await delivered).moderation_flagged).toBe(true);
+
+    await disconnectClient(recipient);
+  });
+
   it('persists the message even when nobody is connected', async () => {
     const { a, conversation_id } = await matchPair(Mode.dating);
 
