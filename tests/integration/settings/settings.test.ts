@@ -1,5 +1,6 @@
 import { API_PREFIX } from '@config/constants';
 import { prisma } from '@/db/prisma';
+import { touchDevice } from '@modules/settings/devices.service';
 import { expireSnoozes } from '@modules/settings/settings.service';
 import { visibleUserFilter } from '@modules/safety/block.service';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
@@ -356,5 +357,149 @@ describe('connected devices', () => {
     const response = await api.get(DEVICES).set(authHeader(tokens));
 
     expect(response.body.data.devices).toEqual([]);
+  });
+
+  function bearer(login: { body: { data: { access_token: string } } }) {
+    return { Authorization: `Bearer ${login.body.data.access_token}` };
+  }
+
+  async function deviceRowId(login: Parameters<typeof bearer>[0], deviceId: string) {
+    const list = await api.get(DEVICES).set(bearer(login));
+    return list.body.data.devices.find((d: { device_id: string }) => d.device_id === deviceId)
+      .id as string;
+  }
+
+  it("stops a revoked device's access token at once, not when it expires", async () => {
+    const { email } = await createAuthenticatedUser();
+    const stolen = await signInWithDevice(email, 'stolen-phone');
+    const mine = await signInWithDevice(email, 'my-phone');
+
+    await api.delete(`${DEVICES}/${await deviceRowId(mine, 'stolen-phone')}`).set(bearer(mine));
+
+    // The access token has up to 30 minutes left, and a stolen phone must not
+    // get them.
+    const response = await api.get(`${API_PREFIX}/users/me`).set(bearer(stolen));
+    expect(response.status).toBe(401);
+    expectErrorEnvelope(response.body, 'AUTH_TOKEN_INVALID');
+
+    const stillMine = await api.get(`${API_PREFIX}/users/me`).set(bearer(mine));
+    expect(stillMine.status).toBe(200);
+  });
+
+  it('stops every other device at once when signing out everywhere else', async () => {
+    const { email } = await createAuthenticatedUser();
+    const other = await signInWithDevice(email, 'device-a');
+    const current = await signInWithDevice(email, 'device-b');
+
+    await api.delete(`${DEVICES}/others`).set({ ...bearer(current), 'X-Device-Id': 'device-b' });
+
+    expect((await api.get(`${API_PREFIX}/users/me`).set(bearer(other))).status).toBe(401);
+    expect((await api.get(`${API_PREFIX}/users/me`).set(bearer(current))).status).toBe(200);
+  });
+
+  it('takes a device off the list when it logs out', async () => {
+    const { email } = await createAuthenticatedUser();
+    const leaving = await signInWithDevice(email, 'device-a');
+    const staying = await signInWithDevice(email, 'device-b');
+
+    await api.post(`${AUTH}/logout`).send({ refresh_token: leaving.body.data.refresh_token });
+
+    const list = await api.get(DEVICES).set(bearer(staying));
+    // Listed as signed in, it would invite the user to sign out a session
+    // that has already ended.
+    expect(list.body.data.devices.map((d: { device_id: string }) => d.device_id)).toEqual([
+      'device-b',
+    ]);
+    expect((await api.get(`${API_PREFIX}/users/me`).set(bearer(leaving))).status).toBe(401);
+  });
+
+  it('lists a device again when someone signs in on it again', async () => {
+    const { email } = await createAuthenticatedUser();
+    const first = await signInWithDevice(email, 'device-a');
+    await api.post(`${AUTH}/logout`).send({ refresh_token: first.body.data.refresh_token });
+
+    const again = await signInWithDevice(email, 'device-a');
+
+    const list = await api.get(DEVICES).set(bearer(again));
+    expect(list.body.data.devices).toHaveLength(1);
+    expect((await api.get(`${API_PREFIX}/users/me`).set(bearer(again))).status).toBe(200);
+  });
+
+  it('records the model and system version, and keeps them current on refresh', async () => {
+    const { email } = await createAuthenticatedUser();
+    const headers = {
+      'X-Device-Id': 'pixel',
+      'X-Platform': 'android',
+      'X-Device-Model': 'Pixel 8',
+    };
+
+    const login = await api
+      .post(`${AUTH}/login`)
+      .set({ ...headers, 'X-App-Version': '1.0.0', 'X-OS-Version': 'Android 15' })
+      .send({ email, password: 'correct horse battery staple' });
+
+    const before = await api.get(DEVICES).set(bearer(login));
+    expect(before.body.data.devices[0]).toMatchObject({
+      model: 'Pixel 8',
+      os_version: 'Android 15',
+      app_version: '1.0.0',
+    });
+
+    const refreshed = await api
+      .post(`${AUTH}/refresh`)
+      .set({ ...headers, 'X-App-Version': '1.1.0', 'X-OS-Version': 'Android 16' })
+      .send({ refresh_token: login.body.data.refresh_token });
+
+    const after = await api.get(DEVICES).set(bearer(refreshed));
+    expect(after.body.data.devices[0]).toMatchObject({
+      model: 'Pixel 8',
+      os_version: 'Android 16',
+      app_version: '1.1.0',
+    });
+  });
+
+  it('cuts an over-long header to fit rather than losing the device', async () => {
+    const { email } = await createAuthenticatedUser();
+
+    const login = await api
+      .post(`${AUTH}/login`)
+      .set({ 'X-Device-Id': 'long', 'X-Platform': 'ios', 'X-Device-Model': 'M'.repeat(100) })
+      .send({ email, password: 'correct horse battery staple' });
+
+    const list = await api.get(DEVICES).set(bearer(login));
+    expect(list.body.data.devices[0].model).toBe('M'.repeat(64));
+  });
+
+  it('never brings back a signed-out device on a refresh', async () => {
+    const { email, user_id: userId } = await createAuthenticatedUser();
+    await signInWithDevice(email, 'phone');
+    await prisma.device.updateMany({
+      where: { user_id: userId, device_id: 'phone' },
+      data: { revoked_at: new Date() },
+    });
+
+    // A refresh racing a sign-out from another phone must not undo it.
+    await touchDevice({ userId, deviceId: 'phone', platform: 'ios' });
+
+    const row = await prisma.device.findFirstOrThrow({
+      where: { user_id: userId, device_id: 'phone' },
+    });
+    expect(row.revoked_at).not.toBeNull();
+  });
+
+  it('signs every device out when the password changes', async () => {
+    const { email, user_id: userId } = await createAuthenticatedUser();
+    const a = await signInWithDevice(email, 'device-a');
+    await signInWithDevice(email, 'device-b');
+
+    const changed = await api.post(`${AUTH}/change-password`).set(bearer(a)).send({
+      current_password: 'correct horse battery staple',
+      new_password: 'an entirely new passphrase 42',
+    });
+    expect(changed.status).toBe(200);
+
+    expect((await api.get(`${API_PREFIX}/users/me`).set(bearer(a))).status).toBe(401);
+    const devices = await prisma.device.findMany({ where: { user_id: userId } });
+    expect(devices.every((device) => device.revoked_at !== null)).toBe(true);
   });
 });

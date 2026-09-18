@@ -2,7 +2,8 @@ import type { Request, RequestHandler } from 'express';
 
 import { UserStatus, prisma } from '@/db/prisma';
 import { verifyAccessToken } from '@modules/auth/token.service';
-import type { AuthenticatedUser } from '@modules/auth/auth.types';
+import type { AccessTokenPayload, AuthenticatedUser } from '@modules/auth/auth.types';
+import { isDeviceSignedOut } from '@modules/settings/devices.service';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 
@@ -33,26 +34,29 @@ function extractBearerToken(req: Request): string | null {
 
 /**
  * Loads the user on every request rather than trusting claims baked into the
- * token. An access token lives 30 minutes; a suspension, deletion, or completed
- * onboarding inside that window must take effect immediately, not when the
- * token happens to expire.
+ * token. An access token lives 30 minutes; a suspension, deletion, completed
+ * onboarding, or the device being signed out inside that window must take
+ * effect immediately, not when the token happens to expire.
  */
-async function loadUser(userId: string): Promise<AuthenticatedUser> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      role: true,
-      status: true,
-      onboarded_at: true,
-      deleted_at: true,
-      suspension_reason: true,
-    },
-  });
+async function loadUser(payload: AccessTokenPayload): Promise<AuthenticatedUser> {
+  const [user, deviceSignedOut] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true,
+        role: true,
+        status: true,
+        onboarded_at: true,
+        deleted_at: true,
+        suspension_reason: true,
+      },
+    }),
+    payload.did ? isDeviceSignedOut(payload.sub, payload.did) : false,
+  ]);
 
-  // A token for a user who no longer exists is invalid, not "not found" — the
-  // client should log out.
-  if (!user || user.deleted_at) {
+  // A token for a user who no longer exists, or from a device that was signed
+  // out, is invalid, not "not found" — the client should log out.
+  if (!user || user.deleted_at || deviceSignedOut) {
     throw new ApiError(ERROR_CODES.AUTH_TOKEN_INVALID);
   }
 
@@ -82,8 +86,7 @@ export const authenticate: RequestHandler = (req, _res, next) => {
   // verifyAccessToken throws AUTH_TOKEN_EXPIRED or AUTH_TOKEN_INVALID.
   Promise.resolve()
     .then(async () => {
-      const payload = verifyAccessToken(token);
-      req.user = await loadUser(payload.sub);
+      req.user = await loadUser(verifyAccessToken(token));
     })
     .then(() => next())
     .catch(next);
@@ -106,8 +109,7 @@ export const optionalAuth: RequestHandler = (req, _res, next) => {
 
   Promise.resolve()
     .then(async () => {
-      const payload = verifyAccessToken(token);
-      req.user = await loadUser(payload.sub);
+      req.user = await loadUser(verifyAccessToken(token));
     })
     .then(() => next())
     .catch((error: unknown) => {

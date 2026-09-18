@@ -227,11 +227,79 @@ describe('GET /users/me/preview', () => {
     expect(preview.body.data.user.display_name).toBe('Viewer');
   });
 
-  it('shows zero distance to yourself', async () => {
+  it('shows no distance, because every stranger would see a different one', async () => {
     const viewer = await makeVisibleUser('Viewer', LONDON);
 
     const preview = await api.get(`${USERS}/me/preview`).set(authHeader(viewer.tokens));
 
-    expect(preview.body.data.distance_metres).toBe(0);
+    // It used to say 0, which the app shows as "less than a mile away".
+    expect(preview.body.data.distance_metres).toBeNull();
+  });
+
+  it('hides activity in the preview when the owner hides it', async () => {
+    const viewer = await makeVisibleUser('Viewer');
+    await prisma.userSettings.create({
+      data: { user_id: viewer.user_id, show_last_active: false },
+    });
+
+    const preview = await api.get(`${USERS}/me/preview`).set(authHeader(viewer.tokens));
+
+    expect(preview.body.data.user.last_active_at).toBeNull();
+  });
+});
+
+describe('privacy settings on GET /users/:id', () => {
+  it('hides the distance of someone who turned "show my distance" off', async () => {
+    const viewer = await makeVisibleUser('Viewer', LONDON);
+    const target = await makeVisibleUser('Target', CAMDEN);
+    await prisma.userSettings.create({ data: { user_id: target.user_id, show_distance: false } });
+
+    const response = await api.get(`${USERS}/${target.user_id}`).set(authHeader(viewer.tokens));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.distance_metres).toBeNull();
+    expect(response.body.data.user.last_active_at).toEqual(expect.any(String));
+  });
+
+  it('hides when someone was last active if they turned that off', async () => {
+    const viewer = await makeVisibleUser('Viewer', LONDON);
+    const target = await makeVisibleUser('Target', CAMDEN);
+    await prisma.userSettings.create({
+      data: { user_id: target.user_id, show_last_active: false },
+    });
+
+    const response = await api.get(`${USERS}/${target.user_id}`).set(authHeader(viewer.tokens));
+
+    expect(response.body.data.user.last_active_at).toBeNull();
+    expect(response.body.data.user.is_online).toBe(false);
+    expect(response.body.data.distance_metres).toEqual(expect.any(Number));
+  });
+
+  it("still shows other people's activity to someone hiding their own", async () => {
+    const viewer = await makeVisibleUser('Viewer', LONDON);
+    const target = await makeVisibleUser('Target', CAMDEN);
+    await prisma.userSettings.create({
+      data: { user_id: viewer.user_id, show_last_active: false },
+    });
+
+    const response = await api.get(`${USERS}/${target.user_id}`).set(authHeader(viewer.tokens));
+
+    // Decided with the product owner, 2026-09-18: hiding yours hides only yours.
+    expect(response.body.data.user.last_active_at).toEqual(expect.any(String));
+  });
+
+  it('applies a setting changed through PATCH /settings', async () => {
+    const viewer = await makeVisibleUser('Viewer', LONDON);
+    const target = await makeVisibleUser('Target', CAMDEN);
+
+    await api
+      .patch(`${API_PREFIX}/settings`)
+      .set(authHeader(target.tokens))
+      .send({ show_distance: false, show_last_active: false });
+
+    const response = await api.get(`${USERS}/${target.user_id}`).set(authHeader(viewer.tokens));
+
+    expect(response.body.data.distance_metres).toBeNull();
+    expect(response.body.data.user.last_active_at).toBeNull();
   });
 });

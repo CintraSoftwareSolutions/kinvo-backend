@@ -96,6 +96,38 @@ export function scoreCandidate(input: {
   return Math.round(score * 100) / 100;
 }
 
+/**
+ * Who may be on someone's deck in `mode`, judged on the people themselves.
+ *
+ * Applied when a deck is built AND every time one is read. Decks are built once
+ * a day, and reading them without this kept showing people who had since taken
+ * a break, blocked the viewer, turned the mode off, or been suspended or
+ * deleted — with their photo — until midnight UTC. The viewer's own filters
+ * (radius, ages, verified only) are not here: changing those discards the deck.
+ */
+export function deckCandidateFilter(
+  viewerId: string,
+  mode: Mode,
+  blockedUserIds: string[],
+): Prisma.UserWhereInput {
+  return {
+    AND: [
+      // THE SHARED EXCLUSION CLAUSE (spec §5.5). Never rebuild these
+      // conditions here — it already covers blocked either direction, self,
+      // suspended, soft-deleted, and snoozed. Adding a rule there must reach
+      // the deck automatically, which is only true while this call exists.
+      visibleUserFilter(viewerId, blockedUserIds),
+      // Mode scoping: the candidate must have THIS mode switched on. Someone
+      // who never enabled `cuddle` is not a cuddle candidate.
+      { user_modes: { some: { mode, is_enabled: true } } },
+      // Only fully onboarded accounts are discoverable. Social and phone
+      // signups have no date of birth until onboarding runs the 18+ check, and
+      // an un-onboarded account must never reach a deck.
+      { onboarded_at: { not: null } },
+    ],
+  };
+}
+
 /** UTC date, because deck days and quota days must roll over together. */
 export function deckDateFor(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -161,19 +193,8 @@ export async function generateDeck(userId: string, mode: Mode, now: Date = new D
 
   const where: Prisma.UserWhereInput = {
     AND: [
-      // THE SHARED EXCLUSION CLAUSE (spec §5.5). Never rebuild these
-      // conditions here — it already covers blocked either direction, self,
-      // suspended, soft-deleted, and snoozed. Adding a rule there must reach
-      // the deck automatically, which is only true while this call exists.
-      visibleUserFilter(userId, blockedUserIds),
+      deckCandidateFilter(userId, mode, blockedUserIds),
       { id: { in: nearby.map((row) => row.user_id) } },
-      // Mode scoping: the candidate must have THIS mode switched on. Someone
-      // who never enabled `cuddle` is not a cuddle candidate.
-      { user_modes: { some: { mode, is_enabled: true } } },
-      // Only fully onboarded accounts are discoverable. Social and phone
-      // signups have no date of birth until onboarding runs the 18+ check, and
-      // an un-onboarded account must never reach a deck.
-      { onboarded_at: { not: null } },
       { date_of_birth: ageWindow },
     ],
   };
@@ -321,11 +342,14 @@ export async function getDeck(
   }
 
   const after = options.cursor ? decodeCursor(options.cursor) : null;
+  const blockedUserIds = await getBlockedUserIds(userId);
 
   const rows = await prisma.deckEntry.findMany({
     where: {
       deck_id: deck.id,
       consumed_at: null,
+      // Who may be shown is decided now, not when the deck was built.
+      target: deckCandidateFilter(userId, mode, blockedUserIds),
       ...(after ? { position: { gt: Number(after.k) } } : {}),
     },
     orderBy: { position: 'asc' },
@@ -338,6 +362,7 @@ export async function getDeck(
       target: {
         select: {
           ...USER_COMPACT_SELECT,
+          settings: { select: { show_last_active: true, show_distance: true } },
           profile: {
             select: {
               bio: true,
@@ -357,7 +382,10 @@ export async function getDeck(
   const cards: DeckCard[] = page.items.map((row) => ({
     entry_id: row.id,
     position: row.position,
-    distance_metres: row.distance_metres,
+    // Settings → "Show my distance". Read now rather than when the deck was
+    // built, so turning it off hides the distance at once. No settings row
+    // means the default, which is to show it.
+    distance_metres: row.target.settings?.show_distance === false ? null : row.distance_metres,
     user: toUserCompact(row.target, photoUrls.get(row.target.id) ?? null),
     bio: row.target.profile?.bio ?? null,
     interests: row.target.profile?.interests.map((link) => link.interest.slug) ?? [],

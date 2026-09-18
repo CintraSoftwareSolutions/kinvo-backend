@@ -34,7 +34,12 @@ export interface CompletionInput {
 function buildCriteria(input: CompletionInput): CompletionCriterion[] {
   return [
     { key: 'photos', label: 'Add a photo', weight: 25, is_met: input.photo_count >= 1 },
-    { key: 'bio', label: 'Write a bio', weight: 20, is_met: (input.bio?.length ?? 0) >= 20 },
+    {
+      key: 'bio',
+      label: 'Write a bio of at least 20 characters',
+      weight: 20,
+      is_met: (input.bio?.length ?? 0) >= 20,
+    },
     {
       key: 'interests',
       label: 'Add at least three interests',
@@ -79,14 +84,21 @@ export function scoreCompletion(input: CompletionInput): ProfileCompletion {
   };
 }
 
-function countLifestyle(profile: {
+/** The profile columns completion is scored on. */
+export interface ScoredProfileFields {
+  bio: string | null;
+  job_title: string | null;
+  organisation: string | null;
+  education: string | null;
   drinking: unknown;
   smoking: unknown;
   exercise: unknown;
   diet: unknown;
   pets: unknown;
   children: unknown;
-}): number {
+}
+
+function countLifestyle(profile: ScoredProfileFields): number {
   return [
     profile.drinking,
     profile.smoking,
@@ -95,6 +107,35 @@ function countLifestyle(profile: {
     profile.pets,
     profile.children,
   ].filter((value) => value !== null && value !== undefined).length;
+}
+
+/** Scores a profile whose fields and counts the caller already has. */
+export function completionOf(
+  profile: ScoredProfileFields,
+  counts: { photos: number; interests: number; prompts: number; has_location: boolean },
+): ProfileCompletion {
+  return scoreCompletion({
+    photo_count: counts.photos,
+    bio: profile.bio,
+    job_title: profile.job_title,
+    organisation: profile.organisation,
+    education: profile.education,
+    has_location: counts.has_location,
+    lifestyle_set_count: countLifestyle(profile),
+    interest_count: counts.interests,
+    prompt_count: counts.prompts,
+  });
+}
+
+/**
+ * What is left to reach 100%, the criteria worth most first, so the app can
+ * say what to do next rather than only show a number.
+ */
+export function missingSteps(completion: ProfileCompletion): { key: string; label: string }[] {
+  return completion.criteria
+    .filter((criterion) => !criterion.is_met)
+    .sort((a, b) => b.weight - a.weight)
+    .map(({ key, label }) => ({ key, label }));
 }
 
 /**
@@ -136,16 +177,11 @@ export async function refreshCompletion(userId: string): Promise<number> {
     where: { profile_id: profile.id, deleted_at: null },
   });
 
-  const { percentage } = scoreCompletion({
-    photo_count: livePhotos,
-    bio: profile.bio,
-    job_title: profile.job_title,
-    organisation: profile.organisation,
-    education: profile.education,
+  const { percentage } = completionOf(profile, {
+    photos: livePhotos,
+    interests: profile._count.interests,
+    prompts: profile._count.answers,
     has_location: coordinates !== null,
-    lifestyle_set_count: countLifestyle(profile),
-    interest_count: profile._count.interests,
-    prompt_count: profile._count.answers,
   });
 
   await prisma.profile.update({

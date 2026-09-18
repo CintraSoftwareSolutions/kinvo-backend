@@ -70,7 +70,8 @@ const userCompactShape = z.object({
   is_verified: z.boolean(),
   is_premium: z.boolean(),
   is_online: z.boolean(),
-  last_active_at: z.string(),
+  /** Null when they have chosen not to show when they were last active. */
+  last_active_at: z.string().nullable(),
 });
 
 export const SERVER_EVENT_SCHEMAS = {
@@ -132,7 +133,8 @@ export const SERVER_EVENT_SCHEMAS = {
   [SERVER_EVENTS.PRESENCE_UPDATE]: z.object({
     user_id: z.string().uuid(),
     is_online: z.boolean(),
-    last_active_at: z.string(),
+    /** Null, with is_online false, once they stop showing their activity. */
+    last_active_at: z.string().nullable(),
   }),
 
   /**
@@ -231,7 +233,7 @@ export const EVENT_DESCRIPTIONS: Record<string, string> = {
   [SERVER_EVENTS.CONVERSATION_UPDATED]:
     'Unread count or last message changed. Update the row without refetching the list.',
   [SERVER_EVENTS.PRESENCE_UPDATE]:
-    'Someone you have an active match with came online or went offline. Never sent across a block.',
+    'Someone you have an active match with came online or went offline. Never sent across a block, and never about someone who hides their activity: when they turn show_last_active off you get one update with is_online false and last_active_at null, then nothing until they turn it back on.',
   [SERVER_EVENTS.ENTITLEMENTS_UPDATED]:
     'The plan changed. Re-read GET /me/entitlements rather than trusting a cached matrix.',
   [SERVER_EVENTS.NOTIFICATION_NEW]:

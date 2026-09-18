@@ -3,11 +3,12 @@ import { MatchStatus, type Mode, SwipeAction, prisma } from '@/db/prisma';
 import { requireFeature } from '@modules/entitlements/entitlements.service';
 import { ENTITLEMENT_KEYS } from '@modules/entitlements/entitlements.types';
 import { checkQuota } from '@modules/entitlements/quota.service';
+import { getBlockedUserIds } from '@modules/safety/block.service';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 import { countLikesYou } from './swipe.service';
-import { deckDateFor, requireEnabledMode } from './deck.service';
+import { deckCandidateFilter, deckDateFor, requireEnabledMode } from './deck.service';
 
 /**
  * Boost and deck statistics (spec §5.3, Batch 7).
@@ -100,6 +101,7 @@ export interface DeckStats {
  */
 export async function deckStats(userId: string, mode: Mode): Promise<DeckStats> {
   await requireEnabledMode(userId, mode);
+  const blockedUserIds = await getBlockedUserIds(userId);
 
   const [swipeCounts, matches, likesReceived, cardsRemaining, boost, quota] = await Promise.all([
     prisma.swipe.groupBy({
@@ -119,6 +121,8 @@ export async function deckStats(userId: string, mode: Mode): Promise<DeckStats> 
       where: {
         consumed_at: null,
         deck: { user_id: userId, mode, deck_date: deckDateFor() },
+        // Only the cards a deck read would actually return.
+        target: deckCandidateFilter(userId, mode, blockedUserIds),
       },
     }),
     activeBoost(userId, mode),

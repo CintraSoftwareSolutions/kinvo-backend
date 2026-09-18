@@ -138,7 +138,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Auth',
     summary: 'Sign out this device',
     description:
-      'Revokes the presented token family only, so other devices stay signed in. Always succeeds, even for an unknown token.',
+      'Revokes the presented token family only, so other devices stay signed in. The device leaves GET /devices and stops receiving push. Always succeeds, even for an unknown token.',
     body: authSchema.logoutSchema,
     auth: false,
     errors: [E.VALIDATION_FAILED],
@@ -273,6 +273,8 @@ export const ROUTES: RouteDoc[] = [
     path: '/users/me',
     tag: 'Profile',
     summary: 'Own full profile',
+    description:
+      'completion_missing lists what is left to reach 100%, the steps worth most first, each with a key and a label to show.',
     auth: true,
     errors: [],
   },
@@ -323,7 +325,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Profile',
     summary: 'How others see you',
     description:
-      'The caller rendered through the exact public projection, so the preview cannot drift from what a stranger actually receives.',
+      'The caller rendered through the exact public projection, so the preview cannot drift from what a stranger actually receives. distance_metres is always null here: every viewer sees a different distance.',
     auth: true,
     errors: [],
   },
@@ -342,7 +344,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Profile',
     summary: "Another user's public profile",
     description:
-      'Returns 404 — never 403 — when the viewer is blocked, the account is suspended or deleted, or the id never existed. All four are deliberately indistinguishable.',
+      'Returns 404 — never 403 — when the viewer is blocked, the account is suspended or deleted, or the id never existed. All four are deliberately indistinguishable. distance_metres is null when they hide their distance; user.is_online is false and user.last_active_at null when they hide their activity.',
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
   },
@@ -424,6 +426,8 @@ export const ROUTES: RouteDoc[] = [
     path: '/media/photos/{id}/primary',
     tag: 'Media',
     summary: 'Set the primary photo',
+    description:
+      'Moves the photo to the front; the others keep their order behind it. The primary photo is always the first one.',
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
   },
@@ -432,9 +436,10 @@ export const ROUTES: RouteDoc[] = [
     path: '/media/photos/{id}',
     tag: 'Media',
     summary: 'Delete a photo',
-    description: 'Remaining photos close the gap in the ordering.',
+    description:
+      'Remaining photos close the gap in the ordering. After onboarding the last photo cannot be deleted: 409 CONFLICT with details.min_photos.',
     auth: true,
-    errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
+    errors: [E.VALIDATION_FAILED, E.NOT_FOUND, E.CONFLICT],
   },
 
   // --- verification -------------------------------------------------------
@@ -1256,7 +1261,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Settings',
     summary: 'Update settings',
     description:
-      'Send only what changed. distance_unit is display only — the API always returns metres.',
+      'Send only what changed. distance_unit is display only — the API always returns metres. show_distance false makes distance_metres null for everyone else (deck cards, profiles). show_last_active false makes is_online false and last_active_at null everywhere others see you, and your matches get one presence update saying so. Incognito, global_verified_only and pause_new_matches are stored but not applied yet.',
     body: settingsSchema.updateSettingsSchema,
     auth: true,
     errors: [E.VALIDATION_FAILED],
@@ -1288,7 +1293,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Settings',
     summary: 'Connected devices',
     description:
-      'Send X-Device-Id and the current device is flagged with is_current, so the app can label it and stop the user signing themselves out by accident.',
+      'Send X-Device-Id and the current device is flagged with is_current, so the app can label it and stop the user signing themselves out by accident. model and os_version come from the optional X-Device-Model and X-OS-Version headers, recorded at sign-in and on every refresh along with last_seen_at.',
     auth: true,
     errors: [],
   },
@@ -1297,7 +1302,8 @@ export const ROUTES: RouteDoc[] = [
     path: '/devices/others',
     tag: 'Settings',
     summary: 'Sign out everywhere else',
-    description: 'Keeps the device making the request. Ends every other session for real.',
+    description:
+      'Keeps the device making the request. Ends every other session for real, straight away, as for revoking one device.',
     auth: true,
     errors: [],
   },
@@ -1307,7 +1313,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Settings',
     summary: 'Revoke one device',
     description:
-      'Ends that session rather than only removing it from a list — the refresh token family bound to the device is revoked too.',
+      'Ends that session rather than only removing it from a list: the refresh tokens bound to the device are revoked, its access token stops working at once (AUTH_TOKEN_INVALID), and its live socket is closed.',
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
   },

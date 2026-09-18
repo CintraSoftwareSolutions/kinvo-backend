@@ -29,8 +29,12 @@ function signOptions(expiresIn: number): SignOptions {
   return { expiresIn, issuer: env.JWT_ISSUER, algorithm: 'HS256' };
 }
 
-export function signAccessToken(userId: string): string {
-  const payload: AccessTokenPayload = { sub: userId, type: 'access' };
+export function signAccessToken(userId: string, deviceId?: string | null): string {
+  const payload: AccessTokenPayload = {
+    sub: userId,
+    ...(deviceId ? { did: deviceId } : {}),
+    type: 'access',
+  };
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, signOptions(ACCESS_TTL_SECONDS));
 }
 
@@ -119,7 +123,7 @@ async function createTokenInFamily(
   });
 
   return {
-    access_token: signAccessToken(userId),
+    access_token: signAccessToken(userId, deviceId),
     refresh_token: refreshToken,
     token_type: 'Bearer',
     expires_in: ACCESS_TTL_SECONDS,

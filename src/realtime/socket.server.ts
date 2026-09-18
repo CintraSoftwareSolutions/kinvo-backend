@@ -15,7 +15,7 @@ import {
 } from './presence';
 import { markRead } from '@modules/chat/chat.service';
 import { otherParticipantId } from './participants';
-import { userRoom } from './rooms';
+import { deviceRoom, userRoom } from './rooms';
 import { authenticateSocket } from './socket.auth';
 
 /**
@@ -98,6 +98,10 @@ async function onConnection(socket: Socket): Promise<void> {
   // phone and their tablet from a single emit.
   const ready = (async () => {
     await socket.join(userRoom(user.id));
+    // So signing this device out can close its connection (see disconnectDevice).
+    if (user.device_id) {
+      await socket.join(deviceRoom(user.id, user.device_id));
+    }
     await markOnline(user.id, socket.id);
     await touchLastActive(user.id);
     await broadcastPresence(user.id, true, new Date());

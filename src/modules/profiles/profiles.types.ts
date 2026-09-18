@@ -25,6 +25,8 @@ export interface OwnProfile {
   interests: ProfileInterestItem[];
   prompts: ProfilePromptItem[];
   completion_percentage: number;
+  /** What is left to reach 100%, the steps worth most first. Empty when done. */
+  completion_missing: { key: string; label: string }[];
   is_verified: boolean;
   status: string;
   is_onboarded: boolean;
@@ -45,7 +47,10 @@ export interface PublicProfile {
   education: string | null;
   height_cm: number | null;
   city: string | null;
-  /** Metres (spec §4.6). Null when either party has no location. */
+  /**
+   * Metres (spec §4.6). Null when they hide their distance, when either party
+   * has no location, and in your own preview.
+   */
   distance_metres: number | null;
   drinking: string | null;
   smoking: string | null;

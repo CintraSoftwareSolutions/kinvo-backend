@@ -12,6 +12,10 @@ import type { PhotoView } from './media.types';
 /**
  * Profile photos (spec §7, Batch 4: photo CRUD, reorder, set primary, max 6).
  *
+ * The primary photo is always the first one. Reordering makes the new first
+ * photo primary, and setting a primary moves it to the front, so neither can
+ * undo the other.
+ *
  * Photos are their own table rather than rows in MediaAsset because they are
  * read on every deck card and every list; a join through a generic asset table
  * would be a self-inflicted N+1 (spec §4.7). The MediaAsset row remains as the
@@ -154,6 +158,9 @@ export async function addPhoto(userId: string, input: AddPhotoInput): Promise<Ph
  * Soft delete keeps the row for moderation history. The partial unique indexes
  * from Batch 1 exclude soft-deleted rows, so the freed position and primary
  * slot become available again immediately.
+ *
+ * Once onboarding is done the last photo cannot go: onboarding requires one,
+ * and without it every deck card and match row would show a blank.
  */
 export async function deletePhoto(userId: string, photoId: string): Promise<void> {
   const profileId = await ensureProfile(userId);
@@ -169,6 +176,14 @@ export async function deletePhoto(userId: string, photoId: string): Promise<void
   }
 
   const remaining = (await livePhotos(profileId)).filter((row) => row.id !== photoId);
+
+  if (remaining.length === 0 && (await isOnboarded(userId))) {
+    throw new ApiError(
+      ERROR_CODES.CONFLICT,
+      'Your profile needs at least one photo. Add another one, then remove this one.',
+      { min_photos: 1 },
+    );
+  }
 
   await prisma.$transaction([
     // The position is left alone: once `deleted_at` is set the row falls out of
@@ -244,30 +259,34 @@ export async function reorderPhotos(userId: string, photoIds: string[]): Promise
   return Promise.all((await livePhotos(profileId)).map(toPhotoView));
 }
 
-/** Promotes one photo to primary. Exactly one primary exists at all times. */
+/**
+ * Makes one photo primary by moving it to the front; the rest keep their order
+ * behind it.
+ *
+ * Promoting it where it stood left the primary somewhere in the middle, and
+ * the next reorder, which makes the first photo primary, quietly undid it.
+ */
 export async function setPrimaryPhoto(userId: string, photoId: string): Promise<PhotoView[]> {
   const profileId = await ensureProfile(userId);
+  const photos = await livePhotos(profileId);
 
-  const target = await prisma.photo.findFirst({
-    where: { id: photoId, profile_id: profileId, deleted_at: null },
-    select: { id: true },
-  });
-
-  if (!target) {
+  if (!photos.some((photo) => photo.id === photoId)) {
     throw ApiError.notFound('That photo does not exist.');
   }
 
-  // Clearing before setting: the partial unique index allows only one primary
-  // per profile, so both must not be true even momentarily.
-  await prisma.$transaction([
-    prisma.photo.updateMany({
-      where: { profile_id: profileId, deleted_at: null },
-      data: { is_primary: false },
-    }),
-    prisma.photo.update({ where: { id: photoId }, data: { is_primary: true } }),
+  return reorderPhotos(userId, [
+    photoId,
+    ...photos.filter((photo) => photo.id !== photoId).map((photo) => photo.id),
   ]);
+}
 
-  return Promise.all((await livePhotos(profileId)).map(toPhotoView));
+async function isOnboarded(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { onboarded_at: true },
+  });
+
+  return Boolean(user?.onboarded_at);
 }
 
 /**

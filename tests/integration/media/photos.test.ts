@@ -186,6 +186,7 @@ describe('DELETE /media/photos/:id', () => {
   it('soft-deletes, keeping the row for moderation history', async () => {
     const { tokens } = await createAuthenticatedUser();
     const photo = await addPhoto(tokens);
+    await addPhoto(tokens);
 
     await api.delete(`${MEDIA_BASE}/photos/${photo.id as string}`).set(authHeader(tokens));
 
@@ -194,7 +195,8 @@ describe('DELETE /media/photos/:id', () => {
   });
 
   it('frees the position for reuse', async () => {
-    const { tokens } = await createAuthenticatedUser();
+    // Mid-onboarding, where swapping out the only photo is allowed.
+    const { tokens } = await createAuthenticatedUser({ onboarded: false });
     const photo = await addPhoto(tokens);
 
     await api.delete(`${MEDIA_BASE}/photos/${photo.id as string}`).set(authHeader(tokens));
@@ -219,6 +221,34 @@ describe('DELETE /media/photos/:id', () => {
 
     const stored = await prisma.photo.findUniqueOrThrow({ where: { id: photo.id as string } });
     expect(stored.deleted_at).toBeNull();
+  });
+
+  it('keeps the last photo once onboarding is done', async () => {
+    const { tokens } = await createAuthenticatedUser();
+    const photo = await addPhoto(tokens);
+
+    const response = await api
+      .delete(`${MEDIA_BASE}/photos/${photo.id as string}`)
+      .set(authHeader(tokens));
+
+    // Onboarding needs a photo, and every card and match row shows it.
+    expect(response.status).toBe(409);
+    expectErrorEnvelope(response.body, 'CONFLICT');
+    expect(response.body.error.details).toEqual({ min_photos: 1 });
+
+    const stored = await prisma.photo.findUniqueOrThrow({ where: { id: photo.id as string } });
+    expect(stored.deleted_at).toBeNull();
+  });
+
+  it('lets the last photo go during onboarding', async () => {
+    const { tokens } = await createAuthenticatedUser({ onboarded: false });
+    const photo = await addPhoto(tokens);
+
+    const response = await api
+      .delete(`${MEDIA_BASE}/photos/${photo.id as string}`)
+      .set(authHeader(tokens));
+
+    expect(response.status).toBe(200);
   });
 });
 
@@ -313,6 +343,41 @@ describe('PATCH /media/photos/:id/primary', () => {
     // Exactly one primary at all times — enforced by a partial unique index.
     expect(primaries).toHaveLength(1);
     expect(primaries[0].id).toBe(second.id);
+  });
+
+  it('moves the chosen photo to the front and keeps the rest in order', async () => {
+    const { tokens } = await createAuthenticatedUser();
+    const a = await addPhoto(tokens);
+    const b = await addPhoto(tokens);
+    const c = await addPhoto(tokens);
+
+    const response = await api
+      .patch(`${MEDIA_BASE}/photos/${c.id as string}/primary`)
+      .set(authHeader(tokens));
+
+    expect(response.body.data.photos.map((p: { id: string }) => p.id)).toEqual([c.id, a.id, b.id]);
+    expect(response.body.data.photos.map((p: { position: number }) => p.position)).toEqual([
+      0, 1, 2,
+    ]);
+    expect(response.body.data.photos[0].is_primary).toBe(true);
+  });
+
+  it('survives a later reorder, which makes the first photo primary', async () => {
+    const { tokens } = await createAuthenticatedUser();
+    const a = await addPhoto(tokens);
+    const b = await addPhoto(tokens);
+    const c = await addPhoto(tokens);
+
+    await api.patch(`${MEDIA_BASE}/photos/${b.id as string}/primary`).set(authHeader(tokens));
+
+    // Swap the two photos behind the primary. Before the primary moved to the
+    // front, this made whichever photo was first primary instead.
+    const response = await api
+      .patch(`${MEDIA_BASE}/photos/reorder`)
+      .set(authHeader(tokens))
+      .send({ photo_ids: [b.id, c.id, a.id] });
+
+    expect(response.body.data.photos[0]).toMatchObject({ id: b.id, is_primary: true });
   });
 
   it("returns 404 for another user's photo", async () => {

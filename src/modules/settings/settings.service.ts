@@ -1,4 +1,5 @@
 import { prisma } from '@/db/prisma';
+import { broadcastActivityVisibility } from '@/realtime/emit';
 import { ApiError } from '@utils/api-error';
 import { logger } from '@utils/logger';
 
@@ -111,12 +112,18 @@ export async function updateSettings(
   userId: string,
   input: UpdateSettingsInput,
 ): Promise<SettingsView> {
-  await getSettings(userId);
+  const before = await getSettings(userId);
 
   await prisma.userSettings.update({
     where: { user_id: userId },
     data: input as never,
   });
+
+  // Lists read the setting on every request, but a match with a chat already
+  // open only hears about it through the socket.
+  if (input.show_last_active !== undefined && input.show_last_active !== before.show_last_active) {
+    await broadcastActivityVisibility(userId, input.show_last_active);
+  }
 
   return getSettings(userId);
 }

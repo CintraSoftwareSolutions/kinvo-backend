@@ -7,7 +7,13 @@ import { calculateAge } from '@utils/age';
 import { toUserCompact } from '@utils/compact';
 import { getPrimaryPhotoUrlFor } from '@modules/media/photos.service';
 import { ensureProfile } from './profile.repository';
-import { getProfileFacts, refreshCompletion, scoreCompletion } from './completion.service';
+import {
+  completionOf,
+  getProfileFacts,
+  missingSteps,
+  refreshCompletion,
+  scoreCompletion,
+} from './completion.service';
 import type {
   OwnProfile,
   ProfileInterestItem,
@@ -90,7 +96,17 @@ export async function getOwnProfile(userId: string): Promise<OwnProfile> {
     },
   });
 
-  const coordinates = await getProfileCoordinates(profile.id);
+  const [coordinates, photoCount] = await Promise.all([
+    getProfileCoordinates(profile.id),
+    prisma.photo.count({ where: { profile_id: profile.id, deleted_at: null } }),
+  ]);
+
+  const completion = completionOf(profile, {
+    photos: photoCount,
+    interests: profile.interests.length,
+    prompts: profile.answers.length,
+    has_location: coordinates !== null,
+  });
 
   return {
     id: profile.id,
@@ -116,6 +132,7 @@ export async function getOwnProfile(userId: string): Promise<OwnProfile> {
     interests: mapInterests(profile),
     prompts: mapPrompts(profile),
     completion_percentage: profile.completion_percentage,
+    completion_missing: missingSteps(completion),
     is_verified: user.is_verified,
     status: user.status,
     is_onboarded: user.onboarded_at !== null,
@@ -146,6 +163,7 @@ export async function getPublicProfile(
       is_verified: true,
       subscription_tier: true,
       last_active_at: true,
+      settings: { select: { show_last_active: true, show_distance: true } },
       profile: { include: FULL_PROFILE_INCLUDE },
     },
   });
@@ -154,14 +172,7 @@ export async function getPublicProfile(
     throw ApiError.notFound();
   }
 
-  const viewerProfile = await prisma.profile.findUnique({
-    where: { user_id: viewerId },
-    select: { id: true },
-  });
-
-  const distance = viewerProfile
-    ? await distanceBetweenProfiles(viewerProfile.id, target.profile.id)
-    : null;
+  const distance = await distanceShownTo(viewerId, target.id, target.profile.id, target.settings);
 
   return {
     // Approved photos only — spec §4.8 keeps pending media owner-visible.
@@ -186,9 +197,36 @@ export async function getPublicProfile(
 }
 
 /**
+ * How far away someone is, as the viewer may see it.
+ *
+ * Null when the target turned off "show my distance" (settings rows are created
+ * on first use, so no row means shown), when either side has no location, and
+ * in the owner's own preview, where every stranger would see a different
+ * number and "0 miles away" is nobody's.
+ */
+async function distanceShownTo(
+  viewerId: string,
+  targetUserId: string,
+  targetProfileId: string,
+  targetSettings: { show_distance: boolean } | null,
+): Promise<number | null> {
+  if (viewerId === targetUserId || targetSettings?.show_distance === false) {
+    return null;
+  }
+
+  const viewerProfile = await prisma.profile.findUnique({
+    where: { user_id: viewerId },
+    select: { id: true },
+  });
+
+  return viewerProfile ? distanceBetweenProfiles(viewerProfile.id, targetProfileId) : null;
+}
+
+/**
  * "How others see you" (spec §7, Batch 3) — the owner rendered through the
  * public projection, so what they preview is byte-for-byte what a stranger gets
- * rather than a lookalike that can drift.
+ * rather than a lookalike that can drift. The one difference is distance,
+ * which has no meaning from yourself; see distanceShownTo.
  */
 export async function getOwnPreview(userId: string): Promise<PublicProfile> {
   return getPublicProfile(userId, userId);

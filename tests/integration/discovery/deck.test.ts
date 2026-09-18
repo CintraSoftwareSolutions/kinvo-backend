@@ -194,6 +194,108 @@ describe('deck exclusions (spec §5.5)', () => {
   });
 });
 
+/**
+ * Decks are built once a day, but who may be shown is decided every time one is
+ * read. Each case builds today's deck with the person on it, changes something
+ * about THEM, and reads it again.
+ */
+describe('a deck already built today', () => {
+  async function deckWithOnePerson() {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const target = await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+
+    const read = () => api.get(DECK('dating')).set(authHeader(viewer.tokens));
+    expect((await read()).body.data).toHaveLength(1);
+
+    return { viewer, target, read };
+  }
+
+  it('drops someone who takes a break after it was built', async () => {
+    const { target, read } = await deckWithOnePerson();
+
+    await prisma.user.update({ where: { id: target.user.id }, data: { is_snoozed: true } });
+
+    expect((await read()).body.data).toEqual([]);
+  });
+
+  it('drops someone who blocks the viewer after it was built', async () => {
+    const { viewer, target, read } = await deckWithOnePerson();
+
+    await createBlock(target.user.id, viewer.user_id);
+
+    // Their card, photo included, must not outlive the block until midnight.
+    expect((await read()).body.data).toEqual([]);
+  });
+
+  it('drops someone suspended or deleted after it was built', async () => {
+    const { viewer, target, read } = await deckWithOnePerson();
+    const second = await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+    await generateDeck(viewer.user_id, Mode.dating);
+    expect((await read()).body.data).toHaveLength(2);
+
+    await prisma.user.update({ where: { id: target.user.id }, data: { status: 'suspended' } });
+    await prisma.user.update({ where: { id: second.user.id }, data: { deleted_at: new Date() } });
+
+    expect((await read()).body.data).toEqual([]);
+  });
+
+  it('drops someone who turns the mode off after it was built', async () => {
+    const { target, read } = await deckWithOnePerson();
+
+    await prisma.userMode.update({
+      where: { user_id_mode: { user_id: target.user.id, mode: Mode.dating } },
+      data: { is_enabled: false },
+    });
+
+    expect((await read()).body.data).toEqual([]);
+  });
+
+  it('counts only the cards it would show in the stats', async () => {
+    const { viewer, target } = await deckWithOnePerson();
+
+    await prisma.user.update({ where: { id: target.user.id }, data: { is_snoozed: true } });
+
+    const stats = await api
+      .get(`${API_PREFIX}/discovery/dating/stats`)
+      .set(authHeader(viewer.tokens));
+
+    // The empty state reads this number; it must agree with the empty deck.
+    expect(stats.body.data.cards_remaining).toBe(0);
+  });
+});
+
+describe('privacy on cards', () => {
+  it('hides the distance of someone who turned "show my distance" off', async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const target = await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+
+    const before = await api.get(DECK('dating')).set(authHeader(viewer.tokens));
+    expect(before.body.data[0].distance_metres).toEqual(expect.any(Number));
+
+    await prisma.userSettings.create({ data: { user_id: target.user.id, show_distance: false } });
+
+    // Read now, not when the deck was built: turning it off takes effect at once.
+    const after = await api.get(DECK('dating')).set(authHeader(viewer.tokens));
+    expect(after.body.data).toHaveLength(1);
+    expect(after.body.data[0].distance_metres).toBeNull();
+  });
+
+  it('hides when someone was last active if they turned that off', async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const target = await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+    await prisma.userSettings.create({
+      data: { user_id: target.user.id, show_last_active: false },
+    });
+
+    const response = await api.get(DECK('dating')).set(authHeader(viewer.tokens));
+
+    expect(response.body.data[0].user.last_active_at).toBeNull();
+    expect(response.body.data[0].user.is_online).toBe(false);
+    // Hiding one thing hides only that thing.
+    expect(response.body.data[0].distance_metres).toEqual(expect.any(Number));
+  });
+});
+
 describe('mode scoping', () => {
   it('does not show someone who enabled a different mode', async () => {
     const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });

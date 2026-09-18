@@ -5,6 +5,7 @@ import { assertAdult, calculateAge } from '@utils/age';
 import { logger } from '@utils/logger';
 import type { AuthMeResponse, AuthTokens } from './auth.types';
 import { getEmailProvider } from '@modules/notifications/providers';
+import { signOutAllDevices } from '@modules/settings/devices.service';
 import { passwordResetEmail } from './auth.emails';
 import {
   consumePasswordResetCode,
@@ -195,6 +196,7 @@ export async function resetPassword(
   // A reset usually means the account was compromised, so every existing
   // session dies with it. The user signs in again with the new password.
   await revokeAllTokensForUser(identity.user.id);
+  await signOutAllDevices(identity.user.id);
 
   logger.info({ user_id: identity.user.id }, 'password reset completed, all sessions revoked');
 }
@@ -226,6 +228,7 @@ export async function changePassword(
   });
 
   await revokeAllTokensForUser(userId);
+  await signOutAllDevices(userId);
 }
 
 export async function getAuthenticatedUser(userId: string): Promise<AuthMeResponse> {

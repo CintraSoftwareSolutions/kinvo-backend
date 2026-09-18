@@ -11,6 +11,13 @@ export interface AuthTokens {
 export interface AccessTokenPayload {
   /** User id. */
   sub: string;
+  /**
+   * The device the session runs on: the app's X-Device-Id at sign-in. Checked
+   * on every request and socket handshake, so a device signed out from
+   * settings stops working at once instead of when this token expires. Absent
+   * for a session that started without a device id.
+   */
+  did?: string;
   type: 'access';
 }
 

@@ -27,6 +27,10 @@ export const CLIENT_HEADERS = {
   APP_VERSION: 'x-app-version',
   PLATFORM: 'x-platform',
   DEVICE_ID: 'x-device-id',
+  /** Optional. Shown in the device list, e.g. "Pixel 8". */
+  DEVICE_MODEL: 'x-device-model',
+  /** Optional. Shown in the device list, e.g. "Android 15". */
+  OS_VERSION: 'x-os-version',
 } as const;
 
 /**

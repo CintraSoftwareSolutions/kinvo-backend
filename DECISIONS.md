@@ -1164,6 +1164,118 @@ number, and can't leave a contact with no way to reach them.
 
 **Verified:** typecheck, lint and format clean. The tests run in CI.
 
+### 2026-09-18 — Profile and settings: what connecting the app turned up
+
+Found while connecting the app's Profile tab and Settings. One commit.
+
+**Decks kept showing people until midnight.** A deck is built once a day, and
+reading it never checked the people on it again. Someone who took a break,
+blocked the viewer, turned the mode off, or was suspended or deleted stayed on
+the viewer's cards, photo included, until the next UTC day. Swiping them gave a
+404, but the card had already been shown, which is the leak spec §5.5 warns
+about. **Fix:** `deckCandidateFilter` holds the rules about the people
+themselves: the shared exclusion clause, the mode switched on, onboarded.
+Building a deck and reading one both apply it, and the stats' `cards_remaining`
+counts only the cards a read would return. The viewer's own filters stay out of
+it, because changing those already discards the deck.
+
+**"Show my distance" and "Show when I'm active" were saved and did nothing.**
+
+- `show_distance` false: `distance_metres` is null on deck cards (checked when
+  the deck is read, so decks already built follow at once) and on
+  `GET /users/{id}`.
+- `show_last_active` false: `toUserCompact` returns `is_online: false` and
+  `last_active_at: null`. Every list builds people there, so cards, likes,
+  matches, chat, plans, calls and blocks all follow, and `USER_COMPACT_SELECT`
+  selects the setting so no caller can forget it. No presence update is sent
+  about them. Turning it off sends their matches one update with
+  `is_online: false, last_active_at: null`, so an open chat stops showing them
+  online; turning it back on sends the real state.
+- **Contract change:** `last_active_at` in `user_compact` and in
+  `presence:update` is now nullable. The app changes with this commit, and no
+  released app reads it.
+- Hiding your own activity doesn't hide other people's from you. PO decision,
+  2026-09-18: "hide theirs only".
+- No settings row still means the defaults: both shown.
+- `incognito`, `global_verified_only` and `pause_new_matches` are still stored
+  and not applied. The API docs now say so, and the app doesn't offer them.
+
+**The owner's preview said 0 metres away.** `GET /users/me/preview` measured
+from the owner to themselves, which the app shows as "less than a mile away".
+**Fix:** it is null there, since every stranger sees a different distance. The
+test that expected 0 now expects null.
+
+**A signed-out device kept working for up to 30 minutes.** Revoking a device
+revoked its refresh tokens, but its access token worked until it expired, and
+its socket stayed open, still delivering messages. **Fix:** access tokens carry
+the device (`did`: the X-Device-Id at sign-in). `authenticate` and the socket
+handshake refuse a token whose device was signed out, with AUTH_TOKEN_INVALID
+so the app signs out, and revoking closes that device's sockets through a new
+`device:{user}:{device}` room. Tokens issued before this change have no `did`
+and run out within 30 minutes as before. The check is one indexed lookup per
+request, run alongside the user lookup.
+
+**The device list couldn't be trusted.**
+
+- Logging out left the device listed as signed in. It is now signed out, as if
+  revoked.
+- A password reset or change revoked every refresh token but left every device
+  listed, with its access token still working. They are now all signed out.
+- A refresh re-registered the device with `revoked_at: null`, so a refresh that
+  raced a sign-out from another phone could undo it. A refresh now only updates
+  a device that is still signed in (`touchDevice`). Only a new sign-in brings a
+  signed-out device back.
+- Nothing sent the phone's model or system version, so two Android phones
+  looked the same, and the sign-in upsert never updated `model` anyway. New
+  optional headers `X-Device-Model` and `X-OS-Version` are recorded at sign-in
+  and on every refresh, cut to the column widths.
+
+**A main photo didn't stay main.** Setting one flagged the photo where it stood,
+and the next reorder made the first photo primary again. **Fix:** setting a
+primary moves the photo to the front, so the primary is always the first photo.
+
+**The last photo could be deleted after onboarding.** Onboarding requires one,
+and every card and match row shows it. **Fix:** 409 CONFLICT with
+`details.min_photos: 1`. During onboarding it can still be swapped out.
+
+**Completion was a number with nothing to act on.** **Fix:** `GET /users/me`
+returns `completion_missing`: the steps not done yet, each with a key and a
+label, the ones worth most first. The bio step's label now says it needs 20
+characters, since a shorter bio never counted.
+
+**Noticed, not changed:**
+
+- The `discover` and `requests` badge counts include cards from earlier days'
+  decks and likes from people now hidden. The app shows neither, but both need
+  fixing before anything does.
+- Suspending or deleting an account doesn't close its open sockets. They are
+  refused at the next connect.
+
+**Tests:**
+
+- `discovery/deck.test.ts`: a deck built today drops people who then take a
+  break, block the viewer, are suspended or deleted, or turn the mode off, and
+  the stats agree. Hidden distance and activity on cards.
+- `users/visibility.test.ts`: hidden distance and activity on profiles, through
+  the settings endpoint too. Hiding yours still shows other people's. The
+  preview has no distance and follows your own setting.
+- `users/profile.test.ts`: `completion_missing` order, steps dropping out as
+  they're done, the bio label.
+- `settings/settings.test.ts`: a revoked device's access token stops at once, and
+  so do the others after "sign out everywhere else". Logging out takes a device
+  off the list and signing in again brings it back. Model and system version are
+  recorded and updated on refresh, and an over-long header is cut. A refresh
+  never revives a signed-out device. A password change signs every device out.
+- `realtime/socket.test.ts`: nothing is announced about someone hiding their
+  activity; one update when they turn it off, the real state when they turn it
+  on. A revoked device's socket is closed and can't reconnect.
+- `media/photos.test.ts`: setting a primary moves it to the front and survives a
+  reorder. The last photo stays after onboarding and can go during it. Two
+  existing tests now add a second photo or run mid-onboarding.
+
+**Verified:** typecheck, lint and format clean, unit tests pass locally. The
+integration tests run in CI.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

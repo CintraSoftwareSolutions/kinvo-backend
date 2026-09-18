@@ -19,7 +19,8 @@ export interface UserCompact {
   is_verified: boolean;
   is_premium: boolean;
   is_online: boolean;
-  last_active_at: string;
+  /** Null when they have chosen not to show when they were last active. */
+  last_active_at: string | null;
 }
 
 /** The columns any query must select to build a UserCompact. */
@@ -30,6 +31,11 @@ export interface UserCompactSource {
   is_verified: boolean;
   subscription_tier: string;
   last_active_at: Date;
+  /**
+   * Their settings row. Rows are created on first use, so null means the
+   * defaults.
+   */
+  settings: { show_last_active: boolean } | null;
 }
 
 /**
@@ -46,6 +52,11 @@ export function toUserCompact(
   primaryPhotoUrl: string | null = null,
   isOnline = false,
 ): UserCompact {
+  // Settings → "Show when I'm active". Someone who turns it off is neither
+  // online nor recently active to anyone else, on every screen at once,
+  // because every screen builds people here. The default is to show it.
+  const showsActivity = source.settings?.show_last_active ?? true;
+
   return {
     id: source.id,
     display_name: source.display_name,
@@ -54,9 +65,9 @@ export function toUserCompact(
     primary_photo_url: primaryPhotoUrl,
     is_verified: source.is_verified,
     is_premium: source.subscription_tier !== 'free',
-    is_online: isOnline,
+    is_online: showsActivity && isOnline,
     // spec §4.6: UTC ISO-8601 with Z.
-    last_active_at: source.last_active_at.toISOString(),
+    last_active_at: showsActivity ? source.last_active_at.toISOString() : null,
   };
 }
 
@@ -71,4 +82,5 @@ export const USER_COMPACT_SELECT = {
   is_verified: true,
   subscription_tier: true,
   last_active_at: true,
+  settings: { select: { show_last_active: true } },
 } as const;

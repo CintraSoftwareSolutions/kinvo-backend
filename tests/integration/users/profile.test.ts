@@ -380,6 +380,51 @@ describe('profile completion percentage', () => {
 
     const response = await api.get(`${USERS}/me`).set(authHeader(tokens));
     expect(response.body.data.completion_percentage).toBe(100);
+    expect(response.body.data.completion_missing).toEqual([]);
+  });
+
+  it('lists what is missing, the steps worth most first', async () => {
+    const { tokens } = await createAuthenticatedUser();
+
+    const empty = await api.get(`${USERS}/me`).set(authHeader(tokens));
+
+    expect(empty.body.data.completion_missing.map((step: { key: string }) => step.key)).toEqual([
+      'photos',
+      'bio',
+      'interests',
+      'prompts',
+      'location',
+      'work',
+      'lifestyle',
+      'education',
+    ]);
+    expect(empty.body.data.completion_missing[0]).toEqual({ key: 'photos', label: 'Add a photo' });
+
+    await api
+      .patch(`${USERS}/me`)
+      .set(authHeader(tokens))
+      .send({ bio: 'A bio that is comfortably longer than twenty characters.' });
+    await addPhoto(tokens);
+
+    const later = await api.get(`${USERS}/me`).set(authHeader(tokens));
+    const keys = later.body.data.completion_missing.map((step: { key: string }) => step.key);
+    expect(keys).not.toContain('bio');
+    expect(keys).not.toContain('photos');
+    expect(keys[0]).toBe('interests');
+  });
+
+  it('keeps asking for a longer bio until it has 20 characters', async () => {
+    const { tokens } = await createAuthenticatedUser();
+
+    const response = await api
+      .patch(`${USERS}/me`)
+      .set(authHeader(tokens))
+      .send({ bio: 'Too short.' });
+
+    const bio = response.body.data.completion_missing.find(
+      (step: { key: string }) => step.key === 'bio',
+    );
+    expect(bio.label).toBe('Write a bio of at least 20 characters');
   });
 
   it('is persisted, not recomputed on read', async () => {

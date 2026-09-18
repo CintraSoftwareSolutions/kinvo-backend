@@ -3,6 +3,8 @@ import { Mode, UserStatus, prisma } from '@/db/prisma';
 import jwt from 'jsonwebtoken';
 
 import { env } from '@config/env';
+import { issueTokenPair } from '@modules/auth/token.service';
+import { registerDevice } from '@modules/settings/devices.service';
 import { resetPresenceThrottle } from '@/realtime/presence';
 import { SERVER_EVENTS } from '@/realtime/events';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
@@ -116,6 +118,47 @@ describe('handshake authentication', () => {
 
     await expect(connectWithToken(viewer.tokens.access_token)).rejects.toMatchObject({
       code: 'ACCOUNT_SUSPENDED',
+    });
+  });
+
+  describe('a device signed out from settings', () => {
+    async function signedInOn(userId: string, deviceId: string) {
+      await registerDevice({ userId, deviceId, platform: 'android' });
+      return issueTokenPair(userId, { deviceId });
+    }
+
+    it('has its live connection closed', async () => {
+      const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+      const lost = await signedInOn(viewer.user_id, 'lost-phone');
+      const mine = await signedInOn(viewer.user_id, 'my-phone');
+
+      const client = await connectClient(lost);
+      await settle();
+      const closed = new Promise<string>((resolve) => {
+        client.on('disconnect', (reason) => resolve(reason));
+      });
+
+      const list = await api.get(`${API_PREFIX}/devices`).set(authHeader(mine));
+      const row = list.body.data.devices.find(
+        (device: { device_id: string }) => device.device_id === 'lost-phone',
+      );
+      await api.delete(`${API_PREFIX}/devices/${row.id as string}`).set(authHeader(mine));
+
+      // Left open, it would keep delivering messages to the lost phone.
+      expect(await closed).toBe('io server disconnect');
+    });
+
+    it('cannot reconnect on a token that has not expired yet', async () => {
+      const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+      const lost = await signedInOn(viewer.user_id, 'lost-phone');
+      await prisma.device.updateMany({
+        where: { user_id: viewer.user_id, device_id: 'lost-phone' },
+        data: { revoked_at: new Date() },
+      });
+
+      await expect(connectWithToken(lost.access_token)).rejects.toMatchObject({
+        code: 'AUTH_TOKEN_INVALID',
+      });
     });
   });
 
@@ -571,6 +614,62 @@ describe('presence', () => {
     // Telling a blocked person when you are online hands them a live feed of
     // the person who blocked them.
     await expect(quiet).resolves.toBeUndefined();
+
+    await disconnectClient(clientA);
+    await disconnectClient(clientB);
+  });
+
+  it('says nothing about someone who hides their activity', async () => {
+    const { a, b } = await matchPair(Mode.dating);
+    await prisma.userSettings.create({ data: { user_id: b.user_id, show_last_active: false } });
+
+    const clientA = await connectClient(a.tokens);
+    const quiet = expectNoEvent(clientA, SERVER_EVENTS.PRESENCE_UPDATE);
+
+    const clientB = await connectClient(b.tokens);
+
+    await expect(quiet).resolves.toBeUndefined();
+
+    // And lists agree with the silence.
+    const response = await api.get(`${API_PREFIX}/conversations`).set(authHeader(a.tokens));
+    expect(response.body.data[0].user.is_online).toBe(false);
+    expect(response.body.data[0].user.last_active_at).toBeNull();
+
+    await disconnectClient(clientA);
+    await disconnectClient(clientB);
+  });
+
+  it('tells matches at once when someone stops showing their activity', async () => {
+    const { a, b } = await matchPair(Mode.dating);
+
+    const clientB = await connectClient(b.tokens);
+    const clientA = await connectClient(a.tokens);
+    await settle();
+
+    const update = nextEvent<{ user_id: string; is_online: boolean; last_active_at: unknown }>(
+      clientA,
+      SERVER_EVENTS.PRESENCE_UPDATE,
+    );
+
+    await api
+      .patch(`${API_PREFIX}/settings`)
+      .set(authHeader(b.tokens))
+      .send({ show_last_active: false });
+
+    // A chat that was already open would otherwise keep showing them online.
+    expect(await update).toEqual({ user_id: b.user_id, is_online: false, last_active_at: null });
+
+    const shown = nextEvent<{ is_online: boolean; last_active_at: unknown }>(
+      clientA,
+      SERVER_EVENTS.PRESENCE_UPDATE,
+    );
+
+    await api
+      .patch(`${API_PREFIX}/settings`)
+      .set(authHeader(b.tokens))
+      .send({ show_last_active: true });
+
+    expect(await shown).toMatchObject({ is_online: true, last_active_at: expect.any(String) });
 
     await disconnectClient(clientA);
     await disconnectClient(clientB);

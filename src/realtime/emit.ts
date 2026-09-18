@@ -7,10 +7,12 @@ import {
   type ConversationUpdatedPayload,
   type MatchNewPayload,
   type MessageNewPayload,
+  type PresenceUpdatePayload,
   SERVER_EVENTS,
   type CallIncomingPayload,
 } from './events';
-import { conversationRoom, userRoom } from './rooms';
+import { onlineStatusFor } from './presence';
+import { conversationRoom, deviceRoom, userRoom } from './rooms';
 
 /**
  * Server-to-client emitters (spec §7, Batch 9).
@@ -72,6 +74,18 @@ export function emitToConversation(
     target.emit(event, payload);
   } catch (error) {
     logger.error({ err: error, event, conversation_id: conversationId }, 'socket emit failed');
+  }
+}
+
+/**
+ * Closes the live connections of a device that was just signed out.
+ * Reconnecting is refused at the handshake, like its next request.
+ */
+export function disconnectDevice(userId: string, deviceId: string): void {
+  try {
+    emitter()?.in(deviceRoom(userId, deviceId)).disconnectSockets(true);
+  } catch (error) {
+    logger.error({ err: error, user_id: userId }, 'socket disconnect failed');
   }
 }
 
@@ -149,6 +163,10 @@ export function emitCallEnded(
  * someone is at their phone, and telling a blocked person would hand them a
  * live activity feed of the person who blocked them. The match requirement is
  * what keeps it to people who already talk.
+ *
+ * Nothing is sent about someone who hides their activity (settings
+ * `show_last_active`). Every list already shows them as neither online nor
+ * recently active, and a live event would hand that straight back.
  */
 export async function broadcastPresence(
   userId: string,
@@ -160,38 +178,88 @@ export async function broadcastPresence(
   }
 
   try {
-    const [matches, blockedUserIds] = await Promise.all([
-      prisma.match.findMany({
-        where: {
-          status: MatchStatus.active,
-          expires_at: { gt: new Date() },
-          OR: [{ user_a_id: userId }, { user_b_id: userId }],
-        },
-        select: { user_a_id: true, user_b_id: true },
-      }),
-      getBlockedUserIds(userId),
-    ]);
-
-    const blocked = new Set(blockedUserIds);
-    const audience = new Set<string>();
-
-    for (const match of matches) {
-      const other = match.user_a_id === userId ? match.user_b_id : match.user_a_id;
-      if (!blocked.has(other)) {
-        audience.add(other);
-      }
+    if (!(await showsActivity(userId))) {
+      return;
     }
 
-    const payload = {
+    await sendPresence({
       user_id: userId,
       is_online: isOnline,
       last_active_at: lastActiveAt.toISOString(),
-    };
+    });
+  } catch (error) {
+    logger.error({ err: error, user_id: userId }, 'presence broadcast failed');
+  }
+}
 
-    for (const recipient of audience) {
-      emitToUser(recipient, SERVER_EVENTS.PRESENCE_UPDATE, payload);
+/**
+ * Tells someone's matches straight away when they start or stop showing their
+ * activity. Without it, a chat that was open when they turned it off would
+ * keep showing them online until the screen was reloaded.
+ */
+export async function broadcastActivityVisibility(userId: string, shown: boolean): Promise<void> {
+  if (!emitter()) {
+    return;
+  }
+
+  try {
+    if (!shown) {
+      await sendPresence({ user_id: userId, is_online: false, last_active_at: null });
+      return;
+    }
+
+    const [online, user] = await Promise.all([
+      onlineStatusFor([userId]),
+      prisma.user.findUnique({ where: { id: userId }, select: { last_active_at: true } }),
+    ]);
+
+    if (user) {
+      await sendPresence({
+        user_id: userId,
+        is_online: online.has(userId),
+        last_active_at: user.last_active_at.toISOString(),
+      });
     }
   } catch (error) {
     logger.error({ err: error, user_id: userId }, 'presence broadcast failed');
+  }
+}
+
+/** Settings rows are created on first use, so no row means the default: shown. */
+async function showsActivity(userId: string): Promise<boolean> {
+  const settings = await prisma.userSettings.findUnique({
+    where: { user_id: userId },
+    select: { show_last_active: true },
+  });
+
+  return settings?.show_last_active ?? true;
+}
+
+async function sendPresence(payload: PresenceUpdatePayload): Promise<void> {
+  const userId = payload.user_id;
+  const [matches, blockedUserIds] = await Promise.all([
+    prisma.match.findMany({
+      where: {
+        status: MatchStatus.active,
+        expires_at: { gt: new Date() },
+        OR: [{ user_a_id: userId }, { user_b_id: userId }],
+      },
+      select: { user_a_id: true, user_b_id: true },
+    }),
+    getBlockedUserIds(userId),
+  ]);
+
+  const blocked = new Set(blockedUserIds);
+  const audience = new Set<string>();
+
+  for (const match of matches) {
+    const other = match.user_a_id === userId ? match.user_b_id : match.user_a_id;
+    if (!blocked.has(other)) {
+      audience.add(other);
+    }
+  }
+
+  for (const recipient of audience) {
+    emitToUser(recipient, SERVER_EVENTS.PRESENCE_UPDATE, payload);
   }
 }

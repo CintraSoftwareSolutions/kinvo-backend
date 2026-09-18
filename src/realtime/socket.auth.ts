@@ -2,6 +2,8 @@ import type { Socket } from 'socket.io';
 
 import { UserStatus, prisma } from '@/db/prisma';
 import { verifyAccessToken } from '@modules/auth/token.service';
+import type { AccessTokenPayload } from '@modules/auth/auth.types';
+import { isDeviceSignedOut } from '@modules/settings/devices.service';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 
@@ -26,6 +28,8 @@ import { ERROR_CODES } from '@utils/error-codes';
 export interface SocketUser {
   id: string;
   role: string;
+  /** The install the session belongs to, when its token says. */
+  device_id: string | null;
 }
 
 declare module 'socket.io' {
@@ -70,10 +74,10 @@ export async function authenticateSocket(socket: Socket): Promise<void> {
     throw handshakeError(ERROR_CODES.AUTH_REQUIRED, 'Sign in to connect.');
   }
 
-  let userId: string;
+  let payload: AccessTokenPayload;
 
   try {
-    userId = verifyAccessToken(token).sub;
+    payload = verifyAccessToken(token);
   } catch (error) {
     // verifyAccessToken has ALREADY mapped jsonwebtoken's errors to the right
     // code, so catching TokenExpiredError here would never match and every
@@ -85,12 +89,17 @@ export async function authenticateSocket(socket: Socket): Promise<void> {
     throw handshakeError(ERROR_CODES.AUTH_TOKEN_INVALID, 'That session is not valid.');
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, role: true, status: true, deleted_at: true, onboarded_at: true },
-  });
+  const [user, deviceSignedOut] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, role: true, status: true, deleted_at: true, onboarded_at: true },
+    }),
+    // A device signed out from settings must not reconnect on a token that
+    // has not expired yet.
+    payload.did ? isDeviceSignedOut(payload.sub, payload.did) : false,
+  ]);
 
-  if (!user || user.deleted_at) {
+  if (!user || user.deleted_at || deviceSignedOut) {
     throw handshakeError(ERROR_CODES.AUTH_TOKEN_INVALID, 'That session is not valid.');
   }
 
@@ -102,5 +111,5 @@ export async function authenticateSocket(socket: Socket): Promise<void> {
     throw handshakeError(ERROR_CODES.ONBOARDING_INCOMPLETE, 'Finish setting up your profile.');
   }
 
-  socket.user = { id: user.id, role: user.role };
+  socket.user = { id: user.id, role: user.role, device_id: payload.did ?? null };
 }

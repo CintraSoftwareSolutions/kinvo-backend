@@ -3,8 +3,12 @@ import type { Request, Response } from 'express';
 import { thirdPartyIntegrationsRequired } from '@config/env';
 import { CLIENT_HEADERS } from '@config/constants';
 import { requireUser } from '@middleware/authenticate';
-import { unregisterPushToken } from '@modules/notifications/push-tokens.service';
-import { registerDevice } from '@modules/settings/devices.service';
+import {
+  type DeviceDetails,
+  registerDevice,
+  signOutDevice,
+  touchDevice,
+} from '@modules/settings/devices.service';
 import { sendSuccess } from '@utils/response';
 import type {
   ChangePasswordBody,
@@ -45,6 +49,25 @@ function deviceIdFor(req: Request, bodyDeviceId: string | undefined): string | u
   return bodyDeviceId ?? req.get(CLIENT_HEADERS.DEVICE_ID) ?? undefined;
 }
 
+/** A client header, trimmed and cut to the column it is stored in. */
+function headerValue(req: Request, name: string, maxLength: number): string | undefined {
+  const value = req.get(name)?.trim();
+  return value ? value.slice(0, maxLength) : undefined;
+}
+
+/** What the request's headers say about the device (spec §4.11). */
+function deviceDetails(req: Request, userId: string, deviceId: string): DeviceDetails {
+  return {
+    userId,
+    deviceId,
+    platform: req.get(CLIENT_HEADERS.PLATFORM) ?? 'web',
+    // The column widths of the devices table.
+    appVersion: headerValue(req, CLIENT_HEADERS.APP_VERSION, 32),
+    osVersion: headerValue(req, CLIENT_HEADERS.OS_VERSION, 32),
+    model: headerValue(req, CLIENT_HEADERS.DEVICE_MODEL, 64),
+  };
+}
+
 /**
  * Records the device a session runs on, EVERY way a session starts.
  *
@@ -64,12 +87,9 @@ async function recordDevice(
     return;
   }
 
-  await registerDevice({
-    userId,
-    deviceId,
-    platform: req.get(CLIENT_HEADERS.PLATFORM) ?? 'web',
-    appVersion: req.get(CLIENT_HEADERS.APP_VERSION) ?? undefined,
-  }).catch((error: unknown) => req.log.warn({ err: error }, 'device registration failed'));
+  await registerDevice(deviceDetails(req, userId, deviceId)).catch((error: unknown) =>
+    req.log.warn({ err: error }, 'device registration failed'),
+  );
 }
 
 export async function register(req: Request, res: Response): Promise<void> {
@@ -113,9 +133,14 @@ export async function refresh(req: Request, res: Response): Promise<void> {
   const { refresh_token: refreshToken } = req.body as RefreshBody;
   const session = await rotateRefreshToken(refreshToken);
 
-  // Keeps the device's last-seen time and app version current, and records a
+  // Keeps the device's last-seen time and versions current, and records a
   // device for a session that started before every sign-in recorded one.
-  await recordDevice(req, session.userId, session.deviceId);
+  // Best effort, like recording it at sign-in.
+  if (session.deviceId) {
+    await touchDevice(deviceDetails(req, session.userId, session.deviceId)).catch(
+      (error: unknown) => req.log.warn({ err: error }, 'device update failed'),
+    );
+  }
 
   sendSuccess(res, { ...session.tokens });
 }
@@ -124,12 +149,13 @@ export async function logout(req: Request, res: Response): Promise<void> {
   const { refresh_token: refreshToken } = req.body as RefreshBody;
   const session = await revokeRefreshToken(refreshToken);
 
-  // A signed-out phone must stop receiving the account's notifications. Left
-  // alone, its token stays registered and message previews keep arriving on a
-  // device nobody is signed in to. Best effort, like the rest of sign-out.
+  // A signed-out phone leaves the device list and stops receiving the
+  // account's notifications. Left alone, it stays listed as signed in, and its
+  // push token keeps message previews arriving on a device nobody is signed in
+  // to. Best effort, like the rest of sign-out.
   if (session?.deviceId) {
-    await unregisterPushToken(session.userId, session.deviceId).catch((error: unknown) =>
-      req.log.warn({ err: error }, 'push token removal failed'),
+    await signOutDevice(session.userId, session.deviceId).catch((error: unknown) =>
+      req.log.warn({ err: error }, 'device sign-out failed'),
     );
   }
 
