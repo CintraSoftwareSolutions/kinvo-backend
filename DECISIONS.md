@@ -1053,6 +1053,101 @@ added to the catalogue on 2026-09-17.
 **Verified:** typecheck, lint and format clean. The tests run in CI; this
 machine has no Docker to run them locally.
 
+### 2026-09-18 — Trusted contacts are really told now
+
+Blocker 01 of the 14 September review. Emergency alerts, shared plans and
+in-call updates all told the user that their trusted contacts had been alerted.
+None of them reached anyone: no email, SMS or push ever went to a contact.
+
+**Email, not SMS (PO decision, 2026-09-18).** SES already sends password reset
+codes, works in every country, and costs nothing per message. SMS can be added
+in `contact-alerts.ts` later without the callers changing.
+
+**Emergency** (`POST /safety/emergency`) emails every trusted contact who has an
+address. The email says:
+
+- when the button was pressed;
+- where, as a map link, if the app sent a position;
+- the note, if there is one;
+- the plan the user is on, if there is one: a confirmed plan that started in
+  the last six hours or starts in the next two. It names who they are with,
+  where and when.
+
+The safety team gets a copy when `SAFETY_ALERT_EMAIL` (new, optional) is set.
+
+What the user is told is now the truth:
+
+- `contacts` says what happened to each contact: `emailed`, `no_email` or
+  `failed`.
+- `contacts_notified` counts only the contacts that were emailed.
+- `summary` is the sentence to show the user.
+- The safety notification says the same thing.
+
+**Shared plans** (`POST /plans/{id}/share`) email each chosen contact the plan.
+A contact counts as told (a `plan_shares` row) only once an email to them was
+sent. So `shared_with_contacts` counts people who know, and a contact with no
+address can be tried again once they have one. A contact already told about a
+plan isn't emailed again (`already_told`).
+
+**In-call updates** (`send_live_update`) email the contacts that the user is on
+a call, and the notification says who was reached.
+
+**Times** are the user's own. The app sends `utc_offset_minutes`, because the
+server knows nobody's time zone. Without it, times are in UTC and say so.
+
+**Abuse.** Alerts could otherwise be used to email anyone the user typed in as
+a contact. So there are limits:
+
+- Emergencies and call updates email contacts at most five times an hour per
+  user. Every press is still recorded, and the user is told why nobody was
+  emailed.
+- A plan is emailed to a contact once.
+- Everything the user typed is escaped in the HTML, and subject lines drop line
+  breaks.
+
+**Also fixed.** `shared_with_contacts` counted both people's shares, so each
+could see how many contacts the other had told. Each person now sees only
+their own.
+
+**History.** `GET /safety/emergency` returns `contacts_notified: null` instead
+of the hard-coded `0` it returned before, because the count isn't stored.
+Keeping it needs a new column on `emergency_events`. That is a migration, so it
+is left for the PO to decide.
+
+**Not done.** Live location (`/safety/location`) still reaches nobody: only the
+sharer can read the trail. Giving contacts a view needs its own design, and the
+app doesn't offer live sharing.
+
+**Deploying.** Emails only go out where a sender is configured
+(`SES_SENDER_ADDRESS`). While the SES account is in the sandbox, it delivers
+only to verified recipient addresses. AWS has to grant production access before
+trusted contacts can receive anything.
+
+**Tests:**
+
+- `tests/integration/safety/safety.test.ts`:
+  - The emergency emails contacts with an address, and says exactly who was
+    reached.
+  - An email that didn't send is never counted.
+  - No contacts still records the event, and says so.
+  - The email names the plan the user is on.
+  - What the user typed is escaped in the HTML.
+  - Five alerts an hour, then no more emails.
+  - The safety team gets a copy.
+  - History has no count.
+- `tests/integration/plans/plans.test.ts`:
+  - The plan is emailed, in the user's time.
+  - A contact is emailed about a plan once.
+  - A contact with no address isn't counted as told.
+  - Each person sees only their own share count.
+- `tests/integration/calls/calls.test.ts`: a live update emails contacts.
+- The recording mailer moved to `tests/helpers/email.ts`, and the password tests
+  use it too.
+
+**Verified:** typecheck, lint and format clean, and `docs/openapi.yaml`
+re-exported. The tests run in CI; this machine has no Docker to run them
+locally.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

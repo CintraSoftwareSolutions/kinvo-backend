@@ -196,6 +196,12 @@ export const envSchema = z.object({
   SMTP_FROM: z.string().optional(),
 
   /**
+   * Where emergency alerts are copied for the safety team (spec §5.7). Without
+   * it, only the user's trusted contacts are emailed.
+   */
+  SAFETY_ALERT_EMAIL: z.string().email().optional(),
+
+  /**
    * Whether Twilio, Google, and Apple credentials must be present in production.
    *
    * Defaults true, and must stay true anywhere real users sign in: without it,

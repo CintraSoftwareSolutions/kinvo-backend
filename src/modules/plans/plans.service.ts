@@ -3,6 +3,8 @@ import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
 import { notify } from '@modules/notifications/notifications.service';
 import { isBlockedBetween } from '@modules/safety/block.service';
 import { otherUserId } from '@modules/matches/matches.service';
+import { type ContactAlert, emailContacts } from '@modules/safety/contact-alerts';
+import { type PlanForContact, planSharedEmail } from '@modules/safety/safety.emails';
 import { onlineStatusFor } from '@/realtime/presence';
 import { ApiError } from '@utils/api-error';
 import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/compact';
@@ -34,7 +36,7 @@ const PLAN_INCLUDE = {
       user_b: { select: USER_COMPACT_SELECT },
     },
   },
-  shares: { select: { id: true, trusted_contact_id: true } },
+  shares: { select: { id: true, trusted_contact: { select: { user_id: true } } } },
 } satisfies Prisma.PlanInclude;
 
 type PlanRow = Prisma.PlanGetPayload<{ include: typeof PLAN_INCLUDE }>;
@@ -95,7 +97,10 @@ function toView(plan: PlanRow, viewerId: string, people: OtherPeople, now: Date)
     custom_address: plan.custom_address,
     is_mine: isMine,
     awaiting_my_response: plan.status === PlanStatus.proposed && !isMine && !timeHasPassed,
-    shared_with_contacts: plan.shares.length,
+    // Only the viewer's own contacts: how many people the other person told
+    // is theirs to know.
+    shared_with_contacts: plan.shares.filter((share) => share.trusted_contact.user_id === viewerId)
+      .length,
     created_at: plan.created_at.toISOString(),
   };
 }
@@ -609,43 +614,111 @@ export async function getPlan(viewerId: string, planId: string): Promise<PlanVie
   return presentOne(await loadVisible(viewerId, planId), viewerId);
 }
 
+export interface ShareResult {
+  /** How many of the caller's contacts now know about the plan, earlier ones included. */
+  shared: number;
+  /** What happened for each contact asked for. */
+  contacts: ContactAlert[];
+}
+
 /**
- * Shares a plan with the caller's trusted contacts (spec §5.7).
+ * Shares a plan with the caller's trusted contacts, by email (spec §5.7).
  *
  * Only a CONFIRMED plan can be shared. Telling someone's sister about a plan
  * that was never accepted is noise, and it leaks the other person's
  * availability before they agreed to anything.
+ *
+ * A contact counts as told only once an email to them was sent, so
+ * `shared_with_contacts` counts people who know, and a contact with no email
+ * address can be tried again once they have one. Someone already told about
+ * this plan isn't emailed again: sharing twice must not become a way to fill
+ * someone's inbox.
  */
 export async function sharePlan(
   viewerId: string,
   planId: string,
   contactIds: string[],
-): Promise<{ shared: number }> {
+  utcOffsetMinutes?: number,
+): Promise<ShareResult> {
   const plan = await loadVisible(viewerId, planId);
 
   if (plan.status !== PlanStatus.confirmed) {
     throw ApiError.badRequest('Only a confirmed plan can be shared.', { status: plan.status });
   }
 
+  const requested = [...new Set(contactIds)];
   const contacts = await prisma.trustedContact.findMany({
-    where: { id: { in: contactIds }, user_id: viewerId },
-    select: { id: true },
+    where: { id: { in: requested }, user_id: viewerId },
+    select: { id: true, name: true, email: true },
   });
 
   // Silently ignoring an id that is not yours would make it impossible to tell
   // a typo from a contact that was deleted.
-  if (contacts.length !== contactIds.length) {
+  if (contacts.length !== requested.length) {
     throw ApiError.notFound('One of those contacts does not exist.');
   }
 
-  await prisma.planShare.createMany({
-    data: contacts.map((contact) => ({ plan_id: planId, trusted_contact_id: contact.id })),
-    skipDuplicates: true,
+  const alreadyTold = new Set(
+    (
+      await prisma.planShare.findMany({
+        where: { plan_id: planId, trusted_contact_id: { in: requested } },
+        select: { trusted_contact_id: true },
+      })
+    ).map((share) => share.trusted_contact_id),
+  );
+
+  const sender = await prisma.user.findUnique({
+    where: { id: viewerId },
+    select: { display_name: true },
+  });
+  const other = plan.match.user_a_id === viewerId ? plan.match.user_b : plan.match.user_a;
+  const details: PlanForContact = {
+    withName: other.display_name,
+    place: placeOf(plan),
+    address: plan.venue?.address ?? plan.custom_address,
+    at: plan.scheduled_at,
+    durationMinutes: plan.duration_minutes,
+  };
+
+  const alerts = await emailContacts(
+    contacts.filter((contact) => !alreadyTold.has(contact.id)),
+    (contact) =>
+      planSharedEmail({
+        to: contact.email,
+        contactName: contact.name,
+        senderName: sender?.display_name ?? 'Someone you know',
+        plan: details,
+        utcOffsetMinutes,
+      }),
+  );
+
+  const emailed = alerts.filter((alert) => alert.delivery === 'emailed');
+  if (emailed.length > 0) {
+    await prisma.planShare.createMany({
+      data: emailed.map((alert) => ({ plan_id: planId, trusted_contact_id: alert.id })),
+      skipDuplicates: true,
+    });
+  }
+
+  const shared = await prisma.planShare.count({
+    where: { plan_id: planId, trusted_contact: { user_id: viewerId } },
   });
 
-  logger.info({ plan_id: planId, count: contacts.length }, 'plan shared with trusted contacts');
+  logger.info({ plan_id: planId, emailed: emailed.length }, 'plan shared with trusted contacts');
 
-  return { shared: contacts.length };
+  return {
+    shared,
+    contacts: [
+      ...alerts,
+      ...contacts
+        .filter((contact) => alreadyTold.has(contact.id))
+        .map((contact) => ({
+          id: contact.id,
+          name: contact.name,
+          delivery: 'already_told' as const,
+        })),
+    ],
+  };
 }
 
 /**

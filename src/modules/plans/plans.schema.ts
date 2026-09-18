@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { PAGINATION } from '@config/constants';
+import { utcOffsetMinutes } from '@modules/safety/safety.schema';
 
 /** Plan request validation (spec §4.10, §5.8, Batch 12). */
 
@@ -59,7 +60,10 @@ export const respondSchema = z.object({ accept: z.boolean() }).strict();
 export const cancelSchema = z.object({ reason: z.string().trim().max(500).optional() }).strict();
 
 export const sharePlanSchema = z
-  .object({ contact_ids: z.array(z.string().uuid()).min(1).max(5) })
+  .object({
+    contact_ids: z.array(z.string().uuid()).min(1).max(5),
+    utc_offset_minutes: utcOffsetMinutes.optional(),
+  })
   .strict();
 
 export type ListPlansQuery = z.infer<typeof listPlansQuerySchema>;

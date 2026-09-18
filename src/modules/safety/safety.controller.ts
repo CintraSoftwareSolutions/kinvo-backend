@@ -208,6 +208,7 @@ export async function raiseEmergency(req: Request, res: Response): Promise<void>
       body.latitude !== undefined && body.longitude !== undefined
         ? { latitude: body.latitude, longitude: body.longitude }
         : undefined,
+    utcOffsetMinutes: body.utc_offset_minutes,
   });
 
   sendSuccess(res, { ...result }, 201);

@@ -1,5 +1,7 @@
 import { API_PREFIX } from '@config/constants';
+import { env } from '@config/env';
 import { Mode, prisma } from '@/db/prisma';
+import { setEmailProvider } from '@modules/notifications/providers';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader, createAuthenticatedUser } from '../../helpers/auth';
 import { LONDON, createBlock } from '../../helpers/factories';
@@ -7,6 +9,7 @@ import { createDiscoverableViewer } from '../../helpers/discovery';
 import { api, expectErrorEnvelope, expectSuccessEnvelope } from '../../helpers/request';
 import { connectRedis, disconnectRedis, seedEntitlements } from '../../helpers/entitlements';
 import { matchPair, sendText } from '../../helpers/chat';
+import { RecordingEmailProvider } from '../../helpers/email';
 
 /**
  * Safety (spec §5.5, §5.7, Batch 12).
@@ -29,6 +32,8 @@ beforeEach(async () => {
   await resetDatabase();
   await seedEntitlements();
 });
+
+afterEach(() => setEmailProvider(null));
 
 afterAll(async () => {
   await closeDatabase();
@@ -595,22 +600,61 @@ describe('live location (spec §5.7)', () => {
 });
 
 describe('emergency', () => {
-  it('records the event and tells the user who was alerted', async () => {
+  /** A signed-in user with the given trusted contacts. */
+  async function withContacts(contacts: Record<string, unknown>[]) {
     const user = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    for (const contact of contacts) {
+      await api.post(`${SAFETY}/contacts`).set(authHeader(user.tokens)).send(contact).expect(201);
+    }
+    return user;
+  }
 
-    await api
-      .post(`${SAFETY}/contacts`)
-      .set(authHeader(user.tokens))
-      .send({ name: 'Sister', phone: '+447700900123' });
+  it('emails every contact with an address, and says exactly who was reached', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const user = await withContacts([
+      { name: 'Sister', email: 'sister@example.com' },
+      { name: 'Brother', phone: '+447700900123' },
+    ]);
 
-    const response = await api
-      .post(`${SAFETY}/emergency`)
-      .set(authHeader(user.tokens))
-      .send({ note: 'Feeling unsafe', latitude: 51.5072, longitude: -0.1276 });
+    const response = await api.post(`${SAFETY}/emergency`).set(authHeader(user.tokens)).send({
+      note: 'Feeling unsafe',
+      latitude: 51.5072,
+      longitude: -0.1276,
+      utc_offset_minutes: 60,
+    });
 
     expect(response.status).toBe(201);
     expect(response.body.data.contacts_notified).toBe(1);
+    expect(response.body.data.contacts).toEqual([
+      expect.objectContaining({ name: 'Sister', delivery: 'emailed' }),
+      expect.objectContaining({ name: 'Brother', delivery: 'no_email' }),
+    ]);
+    expect(response.body.data.summary).toBe(
+      'We emailed 1 of your 2 trusted contacts. Call the others yourself.',
+    );
     expect(response.body.data.location.latitude).toBeCloseTo(51.5072, 3);
+
+    const [email] = mailer.to('sister@example.com');
+    expect(email?.text).toContain('Feeling unsafe');
+    expect(email?.text).toContain(
+      'https://www.google.com/maps/search/?api=1&query=51.5072,-0.1276',
+    );
+    // In the user's own time, which the server only knows from the app.
+    expect(email?.text).toContain('UTC+01:00');
+  });
+
+  it('never counts an email that did not send', async () => {
+    setEmailProvider(new RecordingEmailProvider(false));
+    const user = await withContacts([{ name: 'Sister', email: 'sister@example.com' }]);
+
+    const response = await api.post(`${SAFETY}/emergency`).set(authHeader(user.tokens)).send({});
+
+    expect(response.body.data.contacts_notified).toBe(0);
+    expect(response.body.data.contacts[0].delivery).toBe('failed');
+    expect(response.body.data.summary).toBe(
+      "We couldn't email your trusted contacts. Call someone you trust, or your local emergency number.",
+    );
   });
 
   it('still records when there are no contacts, and says so', async () => {
@@ -622,9 +666,99 @@ describe('emergency', () => {
     // part of. "You have no contacts" is a far better outcome than an error.
     expect(response.status).toBe(201);
     expect(response.body.data.contacts_notified).toBe(0);
+    expect(response.body.data.summary).toBe(
+      'You have no trusted contacts yet. Call someone you trust, or your local emergency number.',
+    );
   });
 
-  it('sends an unmutable safety notification', async () => {
+  it('tells contacts about the plan the user is on', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const { a, b, match_id } = await matchPair(Mode.dating);
+    await api
+      .post(`${SAFETY}/contacts`)
+      .set(authHeader(a.tokens))
+      .send({ name: 'Sister', email: 'sister@example.com' });
+    const plan = await api
+      .post(`${API_PREFIX}/plans`)
+      .set(authHeader(a.tokens))
+      .send({
+        match_id,
+        custom_location: 'The ramen bar',
+        scheduled_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        propose: true,
+      });
+    await api
+      .post(`${API_PREFIX}/plans/${plan.body.data.id}/respond`)
+      .set(authHeader(b.tokens))
+      .send({ accept: true });
+
+    await api.post(`${SAFETY}/emergency`).set(authHeader(a.tokens)).send({}).expect(201);
+
+    const [email] = mailer.to('sister@example.com');
+    expect(email?.text).toContain('Blake');
+    expect(email?.text).toContain('The ramen bar');
+  });
+
+  it('keeps what the user typed out of the HTML', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const user = await withContacts([{ name: '<b>Sis</b>', email: 'sister@example.com' }]);
+
+    await api
+      .post(`${SAFETY}/emergency`)
+      .set(authHeader(user.tokens))
+      .send({ note: '<a href="https://evil.example">help</a>' })
+      .expect(201);
+
+    const html = mailer.sent[0]?.html ?? '';
+    expect(html).not.toContain('<b>Sis</b>');
+    expect(html).not.toContain('<a href="https://evil.example">');
+    expect(html).toContain('&lt;b&gt;Sis&lt;/b&gt;');
+  });
+
+  it('stops emailing contacts after five alerts in an hour', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const user = await withContacts([{ name: 'Sister', email: 'sister@example.com' }]);
+
+    let last;
+    for (let i = 0; i < 6; i++) {
+      last = await api.post(`${SAFETY}/emergency`).set(authHeader(user.tokens)).send({});
+      expect(last.status).toBe(201);
+    }
+
+    // Every press is still recorded; only the emails stop.
+    expect(await prisma.emergencyEvent.count({ where: { user_id: user.user_id } })).toBe(6);
+    expect(mailer.to('sister@example.com')).toHaveLength(5);
+    expect(last?.body.data.summary).toBe(
+      'Your trusted contacts were already alerted in the last hour. Call them, or your local emergency number.',
+    );
+  });
+
+  it('copies the safety team when an address is set', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const user = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const before = env.SAFETY_ALERT_EMAIL;
+    env.SAFETY_ALERT_EMAIL = 'safety@kinvo.test';
+
+    try {
+      const response = await api
+        .post(`${SAFETY}/emergency`)
+        .set(authHeader(user.tokens))
+        .send({})
+        .expect(201);
+
+      const [email] = mailer.to('safety@kinvo.test');
+      expect(email?.subject).toBe(`Emergency alert ${response.body.data.id}`);
+      expect(email?.text).toContain(user.user_id);
+    } finally {
+      env.SAFETY_ALERT_EMAIL = before;
+    }
+  });
+
+  it('sends an unmutable safety notification that says what happened', async () => {
     const user = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
 
     await api.post(`${SAFETY}/emergency`).set(authHeader(user.tokens)).send({});
@@ -634,6 +768,16 @@ describe('emergency', () => {
     });
 
     expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.title).toBe('Nobody was emailed');
+  });
+
+  it('keeps no count in the history rather than guess one', async () => {
+    const user = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    await api.post(`${SAFETY}/emergency`).set(authHeader(user.tokens)).send({});
+
+    const history = await api.get(`${SAFETY}/emergency`).set(authHeader(user.tokens));
+
+    expect(history.body.data.events[0].contacts_notified).toBeNull();
   });
 
   it('requires both coordinates or neither', async () => {

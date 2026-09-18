@@ -86,12 +86,19 @@ export const pingSchema = coordinate
   .extend({ accuracy_metres: z.number().int().min(0).max(10_000).optional() })
   .strict();
 
+/**
+ * The phone's offset from UTC, in minutes, so times in emails to trusted
+ * contacts read as the user's own. The server knows nobody's time zone.
+ */
+export const utcOffsetMinutes = z.number().int().min(-720).max(840);
+
 export const emergencySchema = z
   .object({
     type: z.nativeEnum(EmergencyEventType).optional(),
     note: z.string().trim().max(500).optional(),
     latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(),
+    utc_offset_minutes: utcOffsetMinutes.optional(),
   })
   .strict()
   .refine((value) => (value.latitude === undefined) === (value.longitude === undefined), {

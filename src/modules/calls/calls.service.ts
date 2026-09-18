@@ -10,7 +10,9 @@ import {
 } from '@/db/prisma';
 import { isPairReachable, otherUserId } from '@modules/matches/matches.service';
 import { notify } from '@modules/notifications/notifications.service';
+import { countEmailed, deliverySummary, emailContacts } from '@modules/safety/contact-alerts';
 import { createReport } from '@modules/safety/reports.service';
+import { callUpdateEmail } from '@modules/safety/safety.emails';
 import {
   emitCallAnswered,
   emitCallDeclined,
@@ -487,13 +489,16 @@ export interface SafetyActionResult {
  * The reported user is never told who reported them, through this or any other
  * path (spec §5.7).
  */
+/** Past this many updates in an hour, contacts aren't emailed again. */
+const CALL_UPDATES_PER_HOUR = 5;
+
 export async function recordSafetyAction(
   userId: string,
   callId: string,
   input: { action: CallSafetyActionType; note?: string },
 ): Promise<SafetyActionResult> {
   const call = await loadParticipating(userId, callId);
-  const { otherId } = participantsOf(call, userId);
+  const { other, otherId } = participantsOf(call, userId);
 
   await prisma.callSafetyAction.create({
     data: {
@@ -527,14 +532,44 @@ export async function recordSafetyAction(
   }
 
   if (input.action === CallSafetyActionType.send_live_update) {
-    // Reuses the trusted-contact machinery from Batch 12 rather than inventing
-    // a second alerting path — one place that knows how to reach someone's
-    // contacts, so a fix reaches both.
+    // The same trusted-contact alerting as an emergency, one place that knows
+    // how to reach someone's contacts, so a fix reaches both. Capped like an
+    // emergency, and for the same reason: an update button must not become a
+    // way to fill someone's inbox. The action itself is already recorded.
+    const [sentThisHour, user, contacts] = await Promise.all([
+      prisma.callSafetyAction.count({
+        where: {
+          user_id: userId,
+          action: CallSafetyActionType.send_live_update,
+          created_at: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+        },
+      }),
+      prisma.user.findUnique({ where: { id: userId }, select: { display_name: true } }),
+      prisma.trustedContact.findMany({
+        where: { user_id: userId },
+        select: { id: true, name: true, email: true },
+      }),
+    ]);
+
+    const withinCap = sentThisHour <= CALL_UPDATES_PER_HOUR;
+    const alerts = withinCap
+      ? await emailContacts(contacts, (contact) =>
+          callUpdateEmail({
+            to: contact.email,
+            contactName: contact.name,
+            senderName: user?.display_name ?? 'Someone you know',
+            withName: other.display_name,
+          }),
+        )
+      : [];
+
     await notify({
       userId,
       category: 'safety',
-      title: 'Update sent',
-      body: 'Your trusted contacts have been told you are on a call.',
+      title: countEmailed(alerts) > 0 ? 'Update sent' : 'Nobody was emailed',
+      body: withinCap
+        ? deliverySummary(alerts)
+        : "You've sent several updates in the last hour, so your contacts weren't emailed again.",
       data: { call_id: call.id },
     });
   }

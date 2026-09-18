@@ -7,9 +7,13 @@ import {
   recordLocationPing,
   setEmergencyLocation,
 } from '@/db/geo';
+import { env } from '@config/env';
 import { notify } from '@modules/notifications/notifications.service';
+import { getEmailProvider } from '@modules/notifications/providers';
 import { ApiError } from '@utils/api-error';
 import { logger } from '@utils/logger';
+import { type ContactAlert, countEmailed, emailContacts, emergencySummary } from './contact-alerts';
+import { type PlanForContact, emergencyAlertEmail, safetyTeamEmail } from './safety.emails';
 
 /**
  * Live location and emergency (spec §5.7, Batch 12).
@@ -207,24 +211,49 @@ export interface EmergencyView {
   type: EmergencyEventType;
   note: string | null;
   location: Coordinates | null;
-  contacts_notified: number;
+  /**
+   * How many trusted contacts were emailed. Only known as it is raised, so
+   * `null` in the history rather than a number that would be a guess.
+   */
+  contacts_notified: number | null;
+  /** Each trusted contact and what happened to them. Empty in the history. */
+  contacts: ContactAlert[];
+  /** What the user is told happened, as they should see it. */
+  summary: string | null;
   created_at: string;
 }
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Past this many alerts in an hour, contacts aren't emailed again. They already
+ * have this hour's alerts, and without a cap the button could flood the inbox
+ * of anyone the user typed in as a contact.
+ */
+const EMERGENCY_ALERTS_PER_HOUR = 5;
 
 /**
  * Emergency help (spec §5.7).
  *
- * Records the event, attaches a position if one was given, and notifies the
- * user's trusted contacts.
+ * Records the event, attaches a position if one was given, emails the user's
+ * trusted contacts, copies the safety team, and tells the user exactly who
+ * was reached. A contact without an email address, or an email that didn't
+ * send, is reported as not reached — never as told.
  *
  * Nothing here can fail in a way that loses the event: the row is written
- * first, and notifying contacts is best-effort afterwards. Someone pressing
- * this button is having the worst moment this app will ever be part of, and
- * "the request errored" is not an acceptable outcome.
+ * first, and alerting is best-effort afterwards. Someone pressing this button
+ * is having the worst moment this app will ever be part of, and "the request
+ * errored" is not an acceptable outcome.
  */
 export async function raiseEmergency(
   userId: string,
-  input: { type?: EmergencyEventType; note?: string; coordinates?: Coordinates },
+  input: {
+    type?: EmergencyEventType;
+    note?: string;
+    coordinates?: Coordinates;
+    /** The phone's offset from UTC, so times read as the user's own. */
+    utcOffsetMinutes?: number;
+  },
 ): Promise<EmergencyView> {
   const event = await prisma.emergencyEvent.create({
     data: {
@@ -238,33 +267,127 @@ export async function raiseEmergency(
     await setEmergencyLocation(event.id, input.coordinates);
   }
 
-  const contacts = await prisma.trustedContact.findMany({
-    where: { user_id: userId },
-    select: { id: true, name: true, email: true },
-  });
+  const [user, contacts, raisedThisHour, plan] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { display_name: true } }),
+    prisma.trustedContact.findMany({
+      where: { user_id: userId },
+      select: { id: true, name: true, email: true },
+      orderBy: { created_at: 'asc' },
+    }),
+    prisma.emergencyEvent.count({
+      where: { user_id: userId, created_at: { gte: new Date(Date.now() - HOUR_MS) } },
+    }),
+    currentPlanFor(userId, event.created_at),
+  ]);
 
-  // The user is told their contacts were alerted, so they know whether help is
-  // coming. Categorised as `safety`, which cannot be muted.
+  const coordinates = input.coordinates ?? null;
+  const withinCap = raisedThisHour <= EMERGENCY_ALERTS_PER_HOUR;
+  const alerts = withinCap
+    ? await emailContacts(contacts, (contact) =>
+        emergencyAlertEmail({
+          to: contact.email,
+          contactName: contact.name,
+          senderName: user?.display_name ?? 'Someone you know',
+          at: event.created_at,
+          utcOffsetMinutes: input.utcOffsetMinutes,
+          coordinates,
+          note: event.note,
+          plan,
+        }),
+      )
+    : [];
+
+  if (withinCap && env.SAFETY_ALERT_EMAIL) {
+    // Best effort, like every email: the event is already recorded.
+    await getEmailProvider().send(
+      safetyTeamEmail({
+        to: env.SAFETY_ALERT_EMAIL,
+        eventId: event.id,
+        userId,
+        at: event.created_at,
+        coordinates,
+        note: event.note,
+        contactsEmailed: countEmailed(alerts),
+        contactsTotal: contacts.length,
+      }),
+    );
+  }
+
+  const summary = withinCap
+    ? emergencySummary(alerts)
+    : 'Your trusted contacts were already alerted in the last hour. Call them, or your local emergency number.';
+
+  // Categorised as `safety`, which cannot be muted: the user needs to know
+  // whether anyone was reached.
   await notify({
     userId,
     category: 'safety',
-    title: 'Emergency alert sent',
-    body:
-      contacts.length > 0
-        ? `${contacts.length} trusted contact${contacts.length === 1 ? '' : 's'} have been alerted.`
-        : 'You have no trusted contacts set up. Add one so someone is told next time.',
+    title: countEmailed(alerts) > 0 ? 'Emergency alert sent' : 'Nobody was emailed',
+    body: summary,
     data: { emergency_id: event.id },
   });
 
-  logger.warn({ user_id: userId, event_id: event.id }, 'emergency event raised');
+  logger.warn(
+    { user_id: userId, event_id: event.id, contacts_emailed: countEmailed(alerts) },
+    'emergency event raised',
+  );
 
   return {
     id: event.id,
     type: event.type,
     note: event.note,
-    location: input.coordinates ?? (await getEmergencyLocation(event.id)),
-    contacts_notified: contacts.length,
+    location: coordinates ?? (await getEmergencyLocation(event.id)),
+    contacts_notified: countEmailed(alerts),
+    contacts: alerts,
+    summary,
     created_at: event.created_at.toISOString(),
+  };
+}
+
+/**
+ * The plan the user is most likely on right now: a confirmed plan that
+ * started in the last six hours or starts in the next two. Who they are with
+ * and where is what anyone trying to help needs first.
+ */
+async function currentPlanFor(userId: string, at: Date): Promise<PlanForContact | null> {
+  const plan = await prisma.plan.findFirst({
+    where: {
+      status: PlanStatus.confirmed,
+      scheduled_at: {
+        gte: new Date(at.getTime() - 6 * HOUR_MS),
+        lte: new Date(at.getTime() + 2 * HOUR_MS),
+      },
+      match: { OR: [{ user_a_id: userId }, { user_b_id: userId }] },
+    },
+    orderBy: { scheduled_at: 'desc' },
+    select: {
+      scheduled_at: true,
+      duration_minutes: true,
+      custom_location: true,
+      custom_address: true,
+      venue: { select: { name: true, address: true } },
+      match: {
+        select: {
+          user_a_id: true,
+          user_a: { select: { display_name: true } },
+          user_b: { select: { display_name: true } },
+        },
+      },
+    },
+  });
+
+  if (!plan) {
+    return null;
+  }
+
+  const other = plan.match.user_a_id === userId ? plan.match.user_b : plan.match.user_a;
+
+  return {
+    withName: other.display_name,
+    place: plan.venue?.name ?? plan.custom_location ?? 'a place they did not name',
+    address: plan.venue?.address ?? plan.custom_address,
+    at: plan.scheduled_at,
+    durationMinutes: plan.duration_minutes,
   };
 }
 
@@ -281,7 +404,9 @@ export async function listEmergencies(userId: string): Promise<EmergencyView[]> 
       type: event.type,
       note: event.note,
       location: await getEmergencyLocation(event.id),
-      contacts_notified: 0,
+      contacts_notified: null,
+      contacts: [],
+      summary: null,
       created_at: event.created_at.toISOString(),
     })),
   );

@@ -1,5 +1,6 @@
 import { API_PREFIX } from '@config/constants';
 import { Mode, prisma } from '@/db/prisma';
+import { setEmailProvider } from '@modules/notifications/providers';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader } from '../../helpers/auth';
 import { LONDON, createBlock, createVenue } from '../../helpers/factories';
@@ -7,6 +8,7 @@ import { createDiscoverableViewer } from '../../helpers/discovery';
 import { api, expectErrorEnvelope, expectSuccessEnvelope } from '../../helpers/request';
 import { connectRedis, disconnectRedis, seedEntitlements } from '../../helpers/entitlements';
 import { matchPair } from '../../helpers/chat';
+import { RecordingEmailProvider } from '../../helpers/email';
 
 /**
  * Plans (spec §5.8, Batch 12).
@@ -41,6 +43,8 @@ beforeEach(async () => {
   await resetDatabase();
   await seedEntitlements();
 });
+
+afterEach(() => setEmailProvider(null));
 
 afterAll(async () => {
   await closeDatabase();
@@ -683,31 +687,106 @@ describe('tabs (spec §5.8)', () => {
 });
 
 describe('sharing with trusted contacts (spec §5.7)', () => {
-  it('shares a confirmed plan', async () => {
-    const { a, b, match_id } = await matchPair(Mode.dating);
-
-    const contact = await api
-      .post(`${API_PREFIX}/safety/contacts`)
-      .set(authHeader(a.tokens))
-      .send({ name: 'Sister', phone: '+447700900123' });
-
-    const created = await api
-      .post(PLANS)
-      .set(authHeader(a.tokens))
-      .send({ match_id, custom_location: 'Cafe', scheduled_at: soon(), propose: true });
-
+  /** A confirmed plan at the ramen bar between Alex (a) and Blake (b). */
+  async function confirmedPlan() {
+    const pair = await matchPair(Mode.dating);
+    const created = await api.post(PLANS).set(authHeader(pair.a.tokens)).send({
+      match_id: pair.match_id,
+      custom_location: 'The ramen bar',
+      custom_address: '12 King Street',
+      scheduled_at: soon(),
+      propose: true,
+    });
     await api
       .post(`${PLANS}/${created.body.data.id}/respond`)
-      .set(authHeader(b.tokens))
+      .set(authHeader(pair.b.tokens))
       .send({ accept: true });
+    return { ...pair, plan_id: created.body.data.id as string };
+  }
+
+  async function addContact(tokens: Parameters<typeof authHeader>[0], contact: object) {
+    const response = await api
+      .post(`${API_PREFIX}/safety/contacts`)
+      .set(authHeader(tokens))
+      .send(contact);
+    return response.body.data.id as string;
+  }
+
+  it('emails the plan to a confirmed plan’s chosen contacts', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const { a, plan_id } = await confirmedPlan();
+    const contact = await addContact(a.tokens, { name: 'Sister', email: 'sister@example.com' });
 
     const response = await api
-      .post(`${PLANS}/${created.body.data.id}/share`)
+      .post(`${PLANS}/${plan_id}/share`)
       .set(authHeader(a.tokens))
-      .send({ contact_ids: [contact.body.data.id] });
+      .send({ contact_ids: [contact], utc_offset_minutes: -300 });
 
     expect(response.status).toBe(200);
     expect(response.body.data.shared).toBe(1);
+    expect(response.body.data.contacts).toEqual([
+      { id: contact, name: 'Sister', delivery: 'emailed' },
+    ]);
+
+    const [email] = mailer.to('sister@example.com');
+    expect(email?.subject).toBe('Alex shared their plans with you');
+    expect(email?.text).toContain('Blake');
+    expect(email?.text).toContain('The ramen bar, 12 King Street');
+    expect(email?.text).toContain('UTC-05:00');
+  });
+
+  it('emails a contact about a plan once, however often it is shared', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const { a, plan_id } = await confirmedPlan();
+    const contact = await addContact(a.tokens, { name: 'Sister', email: 'sister@example.com' });
+
+    await api
+      .post(`${PLANS}/${plan_id}/share`)
+      .set(authHeader(a.tokens))
+      .send({ contact_ids: [contact] });
+    const again = await api
+      .post(`${PLANS}/${plan_id}/share`)
+      .set(authHeader(a.tokens))
+      .send({ contact_ids: [contact] });
+
+    // Sharing twice must not become a way to fill someone's inbox.
+    expect(again.body.data.contacts[0].delivery).toBe('already_told');
+    expect(again.body.data.shared).toBe(1);
+    expect(mailer.sent).toHaveLength(1);
+  });
+
+  it('does not count a contact nobody could email as told', async () => {
+    setEmailProvider(new RecordingEmailProvider());
+    const { a, plan_id } = await confirmedPlan();
+    const contact = await addContact(a.tokens, { name: 'Sister', phone: '+447700900123' });
+
+    const response = await api
+      .post(`${PLANS}/${plan_id}/share`)
+      .set(authHeader(a.tokens))
+      .send({ contact_ids: [contact] });
+
+    expect(response.body.data.contacts[0].delivery).toBe('no_email');
+    expect(response.body.data.shared).toBe(0);
+    const plan = await api.get(`${PLANS}/${plan_id}`).set(authHeader(a.tokens));
+    expect(plan.body.data.shared_with_contacts).toBe(0);
+  });
+
+  it('shows each person only how many of their own contacts know', async () => {
+    setEmailProvider(new RecordingEmailProvider());
+    const { a, b, plan_id } = await confirmedPlan();
+    const contact = await addContact(a.tokens, { name: 'Sister', email: 'sister@example.com' });
+    await api
+      .post(`${PLANS}/${plan_id}/share`)
+      .set(authHeader(a.tokens))
+      .send({ contact_ids: [contact] });
+
+    const forA = await api.get(`${PLANS}/${plan_id}`).set(authHeader(a.tokens));
+    const forB = await api.get(`${PLANS}/${plan_id}`).set(authHeader(b.tokens));
+
+    expect(forA.body.data.shared_with_contacts).toBe(1);
+    expect(forB.body.data.shared_with_contacts).toBe(0);
   });
 
   it('refuses to share a plan that was never accepted', async () => {

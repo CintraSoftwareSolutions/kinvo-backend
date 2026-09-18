@@ -933,7 +933,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Safety',
     summary: 'Raise an emergency',
     description:
-      'Records the event, attaches a position if given, and alerts trusted contacts. Succeeds even with no contacts configured and says so — someone pressing this is having the worst moment this app will be part of, and an error is not an acceptable outcome.',
+      'Records the event, attaches a position if given, emails every trusted contact who has an address (with a map link, the note, and the plan the user is on if there is one), and copies the safety team when `SAFETY_ALERT_EMAIL` is set. `contacts` says what happened to each contact (`emailed`, `no_email`, `failed`); `contacts_notified` counts only those emailed; `summary` is what to tell the user. Send `utc_offset_minutes` so times in the emails read as the user’s own. Contacts are emailed for at most five alerts an hour; every press is still recorded. Succeeds even with no contacts configured and says so — someone pressing this is having the worst moment this app will be part of, and an error is not an acceptable outcome.',
     body: emergencySchema,
     auth: true,
     errors: [E.VALIDATION_FAILED],
@@ -943,6 +943,8 @@ export const ROUTES: RouteDoc[] = [
     path: '/safety/emergency',
     tag: 'Safety',
     summary: 'Your emergency history',
+    description:
+      '`contacts_notified` is `null` here: the count is only known as an alert is raised.',
     auth: true,
     errors: [],
   },
@@ -1034,7 +1036,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Plans',
     summary: 'Share with trusted contacts',
     description:
-      'Confirmed plans only. Telling someone\u2019s family about a plan that was never accepted is noise, and it leaks the other person\u2019s availability before they agreed to anything.',
+      'Confirmed plans only. Telling someone\u2019s family about a plan that was never accepted is noise, and it leaks the other person\u2019s availability before they agreed to anything. Each contact is emailed the plan: who with, where and when. `contacts` says what happened to each (`emailed`, `no_email`, `failed`, `already_told`); a contact counts as told only once an email was sent, and one already told about this plan is not emailed again. `shared` is how many of your contacts now know. Send `utc_offset_minutes` so the time reads as the user\u2019s own.',
     body: sharePlanSchema,
     auth: true,
     errors: [E.NOT_FOUND, E.BAD_REQUEST, E.VALIDATION_FAILED],
@@ -1181,7 +1183,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Calls',
     summary: 'In-call safety action',
     description:
-      '`flag`, `end_and_report`, or `send_live_update` (spec §5.7). The action is recorded before anything else happens, because the record is the point — a pattern of flags against one account is what moderation acts on. `end_and_report` ends the call FIRST and then files the report: someone reaching for this wants the call to stop. `note` is optional on purpose; a person reaching for a safety control mid-call is not in a position to write an explanation. The reported user is never told who reported them.',
+      '`flag`, `end_and_report`, or `send_live_update` (spec §5.7). The action is recorded before anything else happens, because the record is the point — a pattern of flags against one account is what moderation acts on. `end_and_report` ends the call FIRST and then files the report: someone reaching for this wants the call to stop. `note` is optional on purpose; a person reaching for a safety control mid-call is not in a position to write an explanation. `send_live_update` emails the user’s trusted contacts that they are on a call, at most five times an hour, and tells the user who was reached. The reported user is never told who reported them.',
     body: safetyActionSchema,
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND],

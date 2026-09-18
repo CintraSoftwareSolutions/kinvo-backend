@@ -1,11 +1,13 @@
 import { API_PREFIX } from '@config/constants';
 import { CallStatus, MatchStatus, Mode, prisma } from '@/db/prisma';
 import { VIDEO_TOKEN_TTL_SECONDS } from '@/providers/video.provider';
+import { setEmailProvider } from '@modules/notifications/providers';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader } from '../../helpers/auth';
 import { api, expectErrorEnvelope, expectSuccessEnvelope } from '../../helpers/request';
 import { connectRedis, disconnectRedis, seedEntitlements } from '../../helpers/entitlements';
 import { matchPair } from '../../helpers/chat';
+import { RecordingEmailProvider } from '../../helpers/email';
 
 /**
  * Video calling (spec §5.7, §7, Batch 14).
@@ -28,6 +30,8 @@ beforeEach(async () => {
   await resetDatabase();
   await seedEntitlements();
 });
+
+afterEach(() => setEmailProvider(null));
 
 afterAll(async () => {
   await closeDatabase();
@@ -493,6 +497,30 @@ describe('in-call safety actions (spec §5.7)', () => {
     // And the report itself is invisible to them.
     const theirReports = await api.get(`${API_PREFIX}/reports`).set(authHeader(a.tokens));
     expect(theirReports.body.data).toHaveLength(0);
+  });
+
+  it('emails trusted contacts a live update, and says who was reached', async () => {
+    const mailer = new RecordingEmailProvider();
+    setEmailProvider(mailer);
+    const { b, call_id } = await startAnswered();
+    await api
+      .post(`${API_PREFIX}/safety/contacts`)
+      .set(authHeader(b.tokens))
+      .send({ name: 'Sister', email: 'sister@example.com' })
+      .expect(201);
+
+    await api
+      .post(`${CALLS}/${call_id}/safety`)
+      .set(authHeader(b.tokens))
+      .send({ action: 'send_live_update' })
+      .expect(200);
+
+    const [email] = mailer.to('sister@example.com');
+    expect(email?.text).toContain('video call');
+    const notification = await prisma.notification.findFirst({
+      where: { user_id: b.user_id, category: 'safety' },
+    });
+    expect(notification?.body).toBe('We emailed your trusted contact.');
   });
 
   it('accepts a safety action with no note', async () => {

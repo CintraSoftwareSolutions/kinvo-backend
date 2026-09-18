@@ -93,7 +93,12 @@ export async function sharePlan(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const body = req.body as SharePlanBody;
 
-  const result = await plansService.sharePlan(user.id, req.params.id as string, body.contact_ids);
+  const result = await plansService.sharePlan(
+    user.id,
+    req.params.id as string,
+    body.contact_ids,
+    body.utc_offset_minutes,
+  );
 
   sendSuccess(res, { ...result });
 }

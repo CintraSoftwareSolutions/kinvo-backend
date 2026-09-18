@@ -2,11 +2,12 @@ import { env } from '@config/env';
 import { prisma } from '@/db/prisma';
 import { verifyPassword } from '@modules/auth/password.service';
 import { setEmailProvider } from '@modules/notifications/providers';
-import type { EmailMessage, EmailProvider } from '@/providers/email.provider';
+import type { EmailMessage } from '@/providers/email.provider';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { AUTH_BASE, TEST_PASSWORD, authHeader, createAuthenticatedUser } from '../../helpers/auth';
 import { api, expectErrorEnvelope } from '../../helpers/request';
 import { uniqueEmail } from '../../helpers/factories';
+import { RecordingEmailProvider } from '../../helpers/email';
 
 const NEW_PASSWORD = 'a completely different password';
 const WRONG_CODE = '000000';
@@ -14,22 +15,6 @@ const WRONG_CODE = '000000';
 beforeEach(resetDatabase);
 afterEach(() => setEmailProvider(null));
 afterAll(closeDatabase);
-
-/**
- * Accepts every message and remembers it, so the endpoint behaves the way it
- * does in production: a code that was delivered is never returned in the
- * response.
- */
-class RecordingEmailProvider implements EmailProvider {
-  readonly name = 'recording';
-  readonly isConfigured = true;
-  readonly sent: EmailMessage[] = [];
-
-  send(message: EmailMessage): Promise<boolean> {
-    this.sent.push(message);
-    return Promise.resolve(true);
-  }
-}
 
 /** The six digits in a message, as the user would read them out of their inbox. */
 function codeFrom(message: EmailMessage): string {
