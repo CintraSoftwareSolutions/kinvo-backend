@@ -7205,7 +7205,10 @@ paths:
       summary: Your plans
       description: "Three tabs via `?tab=upcoming|pending|history`, plus
         `?drafts=true`. Drafts are separate from pending on purpose: pending
-        waits on the other person, a draft waits on you."
+        waits on the other person, a draft waits on you. A proposal whose time
+        passed unanswered is history: it can no longer be accepted. Each plan
+        carries `user`, the other person. Plans with an account that was deleted
+        or suspended are not listed."
       security:
         - bearerAuth: []
       responses:
@@ -7476,6 +7479,9 @@ paths:
       summary: Edit a plan
       description: Creator only, and only while it is a draft or a proposal. Editing
         after acceptance would let one side change the time the other agreed to.
+        Editing a proposal notifies the other person. Set `venue_id` or
+        `custom_location` to `null` to switch between a venue and a typed
+        location; one of them must remain.
       parameters:
         - name: id
           in: path
@@ -7495,13 +7501,16 @@ paths:
                 venue_id:
                   type: string
                   format: uuid
+                  nullable: true
                 custom_location:
                   type: string
                   minLength: 1
                   maxLength: 200
+                  nullable: true
                 custom_address:
                   type: string
                   maxLength: 300
+                  nullable: true
                 scheduled_at:
                   type: string
                   format: date-time
@@ -7513,6 +7522,90 @@ paths:
                   type: string
                   maxLength: 1000
               additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+    delete:
+      tags:
+        - Plans
+      summary: Delete a draft
+      description: Drafts only, and only by their creator. A draft is deleted rather
+        than cancelled because a cancelled plan is visible to both people, and
+        the other person never saw the draft. Nobody is notified.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Success
@@ -7670,7 +7763,8 @@ paths:
         - Plans
       summary: Accept or decline
       description: Only the person who did NOT propose it may respond — otherwise
-        someone could produce a confirmed meeting the other never agreed to.
+        someone could produce a confirmed meeting the other never agreed to. A
+        proposal whose time has passed can be declined but not accepted.
       parameters:
         - name: id
           in: path
@@ -7765,7 +7859,10 @@ paths:
       tags:
         - Plans
       summary: Cancel a plan
-      description: Either participant, any time before completion.
+      description: Either participant, any time before it is finished, and only for a
+        plan that was sent. A draft is deleted instead (`DELETE /plans/{id}`).
+        Unmatching or blocking cancels the pair’s open plans without a
+        notification.
       parameters:
         - name: id
           in: path

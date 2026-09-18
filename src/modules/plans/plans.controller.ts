@@ -81,6 +81,14 @@ export async function cancelPlan(req: Request, res: Response): Promise<void> {
   sendSuccess(res, { ...result });
 }
 
+export async function deleteDraft(req: Request, res: Response): Promise<void> {
+  const user = requireUser(req);
+
+  await plansService.deleteDraft(user.id, req.params.id as string);
+
+  sendSuccess(res, { deleted: true });
+}
+
 export async function sharePlan(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const body = req.body as SharePlanBody;

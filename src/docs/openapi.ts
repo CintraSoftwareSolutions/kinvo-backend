@@ -953,7 +953,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Plans',
     summary: 'Your plans',
     description:
-      'Three tabs via `?tab=upcoming|pending|history`, plus `?drafts=true`. Drafts are separate from pending on purpose: pending waits on the other person, a draft waits on you.',
+      'Three tabs via `?tab=upcoming|pending|history`, plus `?drafts=true`. Drafts are separate from pending on purpose: pending waits on the other person, a draft waits on you. A proposal whose time passed unanswered is history: it can no longer be accepted. Each plan carries `user`, the other person. Plans with an account that was deleted or suspended are not listed.',
     auth: true,
     errors: [E.VALIDATION_FAILED],
   },
@@ -982,7 +982,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Plans',
     summary: 'Edit a plan',
     description:
-      'Creator only, and only while it is a draft or a proposal. Editing after acceptance would let one side change the time the other agreed to.',
+      'Creator only, and only while it is a draft or a proposal. Editing after acceptance would let one side change the time the other agreed to. Editing a proposal notifies the other person. Set `venue_id` or `custom_location` to `null` to switch between a venue and a typed location; one of them must remain.',
     body: updatePlanSchema,
     auth: true,
     errors: [E.NOT_FOUND, E.BAD_REQUEST, E.VALIDATION_FAILED],
@@ -1002,7 +1002,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Plans',
     summary: 'Accept or decline',
     description:
-      'Only the person who did NOT propose it may respond — otherwise someone could produce a confirmed meeting the other never agreed to.',
+      'Only the person who did NOT propose it may respond — otherwise someone could produce a confirmed meeting the other never agreed to. A proposal whose time has passed can be declined but not accepted.',
     body: respondSchema,
     auth: true,
     errors: [E.NOT_FOUND, E.BAD_REQUEST, E.VALIDATION_FAILED],
@@ -1012,8 +1012,19 @@ export const ROUTES: RouteDoc[] = [
     path: '/plans/{id}/cancel',
     tag: 'Plans',
     summary: 'Cancel a plan',
-    description: 'Either participant, any time before completion.',
+    description:
+      'Either participant, any time before it is finished, and only for a plan that was sent. A draft is deleted instead (`DELETE /plans/{id}`). Unmatching or blocking cancels the pair’s open plans without a notification.',
     body: cancelSchema,
+    auth: true,
+    errors: [E.NOT_FOUND, E.BAD_REQUEST, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'delete',
+    path: '/plans/{id}',
+    tag: 'Plans',
+    summary: 'Delete a draft',
+    description:
+      'Drafts only, and only by their creator. A draft is deleted rather than cancelled because a cancelled plan is visible to both people, and the other person never saw the draft. Nobody is notified.',
     auth: true,
     errors: [E.NOT_FOUND, E.BAD_REQUEST, E.VALIDATION_FAILED],
   },

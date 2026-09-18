@@ -392,6 +392,61 @@
       }
     },
     {
+      "event": "notification:new",
+      "direction": "server_to_client",
+      "description": "A notification was added to the feed. Update the badge and the list without refetching. Not sent for categories the user switched off in-app.",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "new_match",
+              "new_like",
+              "new_message",
+              "plan_update",
+              "call",
+              "safety",
+              "moderation",
+              "subscription",
+              "system"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "read_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "title",
+          "body",
+          "data",
+          "read_at",
+          "created_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "event": "call:incoming",
       "direction": "server_to_client",
       "description": "Someone you matched with is calling. Handle this before anything else — it is what rings the phone. The matching push notification carries the same call_id; treat both as one call. Answer with POST /calls/{id}/answer to get a room token.",

@@ -56,6 +56,13 @@ plansRouter.post(
   asyncHandler(controller.cancelPlan),
 );
 
+/** Drafts only: a cancelled plan is visible to both people, a draft never was. */
+plansRouter.delete(
+  '/:id',
+  validate({ params: planIdParamSchema }),
+  asyncHandler(controller.deleteDraft),
+);
+
 plansRouter.post(
   '/:id/share',
   validate({ params: planIdParamSchema, body: sharePlanSchema }),

@@ -3,6 +3,7 @@ import { MatchStatus, type Mode, type Prisma, UserStatus, prisma } from '@/db/pr
 import { requireFeature } from '@modules/entitlements/entitlements.service';
 import { ENTITLEMENT_KEYS } from '@modules/entitlements/entitlements.types';
 import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
+import { closePlansOnEndedMatches } from '@modules/plans/ended-matches';
 import { getBlockedUserIds, isBlockedBetween } from '@modules/safety/block.service';
 import { onlineStatusFor } from '@/realtime/presence';
 import { ApiError } from '@utils/api-error';
@@ -257,6 +258,8 @@ export async function getMatch(viewerId: string, matchId: string): Promise<Match
  * Not a delete: `unmatched_by_id` is what a later report investigation needs,
  * and the row is what stops the pair reappearing in each other's decks. The
  * swipes stay, so neither person is offered the other again in this mode.
+ * The pair's open plans close in the same transaction (see
+ * `closePlansOnEndedMatches`).
  */
 export async function unmatch(viewerId: string, matchId: string): Promise<void> {
   const match = await prisma.match.findFirst({
@@ -272,13 +275,17 @@ export async function unmatch(viewerId: string, matchId: string): Promise<void> 
     throw ApiError.notFound();
   }
 
-  await prisma.match.update({
-    where: { id: match.id },
-    data: {
-      status: MatchStatus.unmatched,
-      unmatched_at: new Date(),
-      unmatched_by_id: viewerId,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.match.update({
+      where: { id: match.id },
+      data: {
+        status: MatchStatus.unmatched,
+        unmatched_at: new Date(),
+        unmatched_by_id: viewerId,
+      },
+    });
+
+    await closePlansOnEndedMatches(tx, { id: match.id }, viewerId);
   });
 
   logger.info({ match_id: match.id }, 'match unmatched');

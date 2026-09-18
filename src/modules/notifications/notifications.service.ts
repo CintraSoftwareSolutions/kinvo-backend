@@ -389,7 +389,15 @@ export async function badgeCounts(userId: string): Promise<BadgeCounts> {
           // Only plans awaiting THIS user's answer. A plan this user proposed
           // is pending for the other person, not a badge on their own tab.
           NOT: { creator_id: userId },
-          match: { OR: [{ user_a_id: userId }, { user_b_id: userId }] },
+          // One whose time has passed can no longer be accepted.
+          scheduled_at: { gt: new Date() },
+          // As the Plans tab lists them: not with an account that was
+          // deleted or suspended.
+          match: {
+            OR: [{ user_a_id: userId }, { user_b_id: userId }],
+            user_a: { deleted_at: null, status: 'active' },
+            user_b: { deleted_at: null, status: 'active' },
+          },
         },
       }),
       unreadCount(userId),

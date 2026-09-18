@@ -1,8 +1,11 @@
-import { MatchStatus, PlanStatus, type Prisma, prisma } from '@/db/prisma';
+import { MatchStatus, PlanStatus, type Prisma, UserStatus, prisma } from '@/db/prisma';
+import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
 import { notify } from '@modules/notifications/notifications.service';
 import { isBlockedBetween } from '@modules/safety/block.service';
 import { otherUserId } from '@modules/matches/matches.service';
+import { onlineStatusFor } from '@/realtime/presence';
 import { ApiError } from '@utils/api-error';
+import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/compact';
 import { decodeCursor, paginate } from '@utils/cursor';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
@@ -20,7 +23,17 @@ import { logger } from '@utils/logger';
 
 const PLAN_INCLUDE = {
   venue: { select: { id: true, name: true, category: true, address: true, city: true } },
-  match: { select: { id: true, mode: true, user_a_id: true, user_b_id: true, status: true } },
+  match: {
+    select: {
+      id: true,
+      mode: true,
+      user_a_id: true,
+      user_b_id: true,
+      status: true,
+      user_a: { select: USER_COMPACT_SELECT },
+      user_b: { select: USER_COMPACT_SELECT },
+    },
+  },
   shares: { select: { id: true, trusted_contact_id: true } },
 } satisfies Prisma.PlanInclude;
 
@@ -30,6 +43,8 @@ export interface PlanView {
   id: string;
   match_id: string;
   mode: string;
+  /** The other person in the plan, so a list of plans can say who each is with. */
+  user: UserCompact;
   status: PlanStatus;
   scheduled_at: string | null;
   duration_minutes: number | null;
@@ -39,19 +54,31 @@ export interface PlanView {
   custom_address: string | null;
   /** True when the caller created it — the app renders a different screen. */
   is_mine: boolean;
-  /** True when it is the caller's turn to respond. */
+  /**
+   * True when it is the caller's turn to respond. Never true once the plan's
+   * time has passed: that proposal can no longer be accepted.
+   */
   awaiting_my_response: boolean;
   shared_with_contacts: number;
   created_at: string;
 }
 
-function toView(plan: PlanRow, viewerId: string): PlanView {
+/** What describing the other person in a set of plans needs, looked up once. */
+interface OtherPeople {
+  photoUrls: Map<string, string>;
+  online: Set<string>;
+}
+
+function toView(plan: PlanRow, viewerId: string, people: OtherPeople, now: Date): PlanView {
   const isMine = plan.creator_id === viewerId;
+  const other = plan.match.user_a_id === viewerId ? plan.match.user_b : plan.match.user_a;
+  const timeHasPassed = plan.scheduled_at !== null && plan.scheduled_at <= now;
 
   return {
     id: plan.id,
     match_id: plan.match_id,
     mode: plan.match.mode,
+    user: toUserCompact(other, people.photoUrls.get(other.id) ?? null, people.online.has(other.id)),
     status: plan.status,
     scheduled_at: plan.scheduled_at?.toISOString() ?? null,
     duration_minutes: plan.duration_minutes,
@@ -67,11 +94,43 @@ function toView(plan: PlanRow, viewerId: string): PlanView {
     custom_location: plan.custom_location,
     custom_address: plan.custom_address,
     is_mine: isMine,
-    awaiting_my_response: plan.status === PlanStatus.proposed && !isMine,
+    awaiting_my_response: plan.status === PlanStatus.proposed && !isMine && !timeHasPassed,
     shared_with_contacts: plan.shares.length,
     created_at: plan.created_at.toISOString(),
   };
 }
+
+async function present(plans: PlanRow[], viewerId: string): Promise<PlanView[]> {
+  const others = [...new Set(plans.map((plan) => otherUserId(plan.match, viewerId)))];
+  const [photoUrls, online] = await Promise.all([
+    getPrimaryPhotoUrlsFor(others),
+    onlineStatusFor(others),
+  ]);
+  const now = new Date();
+
+  return plans.map((plan) => toView(plan, viewerId, { photoUrls, online }, now));
+}
+
+async function presentOne(plan: PlanRow, viewerId: string): Promise<PlanView> {
+  const [view] = await present([plan], viewerId);
+
+  if (!view) {
+    throw new Error('Presenting one plan produced no view.');
+  }
+
+  return view;
+}
+
+/**
+ * Both people still have accounts in good standing. A plan with someone whose
+ * account was deleted or suspended is hidden, as their match is: showing it
+ * would tell them apart from someone who never existed (spec §5.5). The caller
+ * passed `requireOnboarded`, so their side always holds.
+ */
+const BOTH_ACCOUNTS_ACTIVE = {
+  user_a: { deleted_at: null, status: UserStatus.active },
+  user_b: { deleted_at: null, status: UserStatus.active },
+} satisfies Prisma.MatchWhereInput;
 
 /**
  * Loads a plan the caller can see.
@@ -83,7 +142,7 @@ async function loadVisible(viewerId: string, planId: string): Promise<PlanRow> {
   const plan = await prisma.plan.findFirst({
     where: {
       id: planId,
-      match: { OR: [{ user_a_id: viewerId }, { user_b_id: viewerId }] },
+      match: { OR: [{ user_a_id: viewerId }, { user_b_id: viewerId }], ...BOTH_ACCOUNTS_ACTIVE },
       // spec §5.8: a draft is visible only to its creator.
       OR: [{ status: { not: PlanStatus.draft } }, { creator_id: viewerId }],
     },
@@ -154,14 +213,7 @@ export async function createPlan(viewerId: string, input: CreatePlanInput): Prom
   }
 
   if (input.venue_id) {
-    const venue = await prisma.venue.findFirst({
-      where: { id: input.venue_id, is_active: true },
-      select: { id: true },
-    });
-
-    if (!venue) {
-      throw ApiError.notFound('That venue is not available.');
-    }
+    await assertVenueAvailable(input.venue_id);
   }
 
   // Proposing without a time is meaningless — the other person cannot answer
@@ -202,11 +254,28 @@ export async function createPlan(viewerId: string, input: CreatePlanInput): Prom
     'plan created',
   );
 
-  return toView(plan, viewerId);
+  return presentOne(plan, viewerId);
+}
+
+/** Refuses a venue that doesn't exist or is no longer listed. */
+async function assertVenueAvailable(venueId: string): Promise<void> {
+  const venue = await prisma.venue.findFirst({
+    where: { id: venueId, is_active: true },
+    select: { id: true },
+  });
+
+  if (!venue) {
+    throw ApiError.notFound('That venue is not available.');
+  }
+}
+
+/** Where a plan is, in a word or two, for a notification. */
+function placeOf(plan: PlanRow): string {
+  return plan.venue?.name ?? plan.custom_location ?? 'somewhere';
 }
 
 async function notifyProposed(plan: PlanRow, recipientId: string): Promise<void> {
-  const where = plan.venue?.name ?? plan.custom_location ?? 'somewhere';
+  const where = placeOf(plan);
 
   await notify({
     userId: recipientId,
@@ -217,10 +286,23 @@ async function notifyProposed(plan: PlanRow, recipientId: string): Promise<void>
   });
 }
 
+export interface UpdatePlanInput {
+  /** `null` clears it, to switch to a typed location. */
+  venue_id?: string | null;
+  /** `null` clears it, to switch to a venue. */
+  custom_location?: string | null;
+  /** `null` or an empty string clears it. */
+  custom_address?: string | null;
+  scheduled_at?: string;
+  duration_minutes?: number;
+  /** An empty string clears it. */
+  notes?: string;
+}
+
 export async function updatePlan(
   viewerId: string,
   planId: string,
-  input: Partial<CreatePlanInput>,
+  input: UpdatePlanInput,
 ): Promise<PlanView> {
   const existing = await loadVisible(viewerId, planId);
 
@@ -236,7 +318,19 @@ export async function updatePlan(
     });
   }
 
-  await assertCanPlan(viewerId, existing.match_id);
+  const { otherUserId: recipientId } = await assertCanPlan(viewerId, existing.match_id);
+
+  if (input.venue_id) {
+    await assertVenueAvailable(input.venue_id);
+  }
+
+  const venueId = input.venue_id === undefined ? existing.venue_id : input.venue_id;
+  const customLocation =
+    input.custom_location === undefined ? existing.custom_location : input.custom_location;
+
+  if (!venueId && !customLocation) {
+    throw ApiError.validation({ venue_id: ['Choose a venue or give a location.'] });
+  }
 
   const scheduledAt =
     input.scheduled_at === undefined ? existing.scheduled_at : new Date(input.scheduled_at);
@@ -248,10 +342,8 @@ export async function updatePlan(
   const updated = await prisma.plan.update({
     where: { id: planId },
     data: {
-      ...(input.venue_id === undefined ? {} : { venue_id: input.venue_id || null }),
-      ...(input.custom_location === undefined
-        ? {}
-        : { custom_location: input.custom_location || null }),
+      venue_id: venueId,
+      custom_location: customLocation,
       ...(input.custom_address === undefined
         ? {}
         : { custom_address: input.custom_address || null }),
@@ -262,7 +354,19 @@ export async function updatePlan(
     include: PLAN_INCLUDE,
   });
 
-  return toView(updated, viewerId);
+  // The other person may already have read this proposal. Changing it quietly
+  // would have them answer a plan they haven't seen.
+  if (existing.status === PlanStatus.proposed) {
+    await notify({
+      userId: recipientId,
+      category: 'plan_update',
+      title: 'Plan changed',
+      body: `${placeOf(updated)} — take another look before you answer.`,
+      data: { plan_id: updated.id, match_id: updated.match_id },
+    });
+  }
+
+  return presentOne(updated, viewerId);
 }
 
 /** Moves a draft to proposed. The only way the other side learns it exists. */
@@ -281,6 +385,11 @@ export async function proposePlan(viewerId: string, planId: string): Promise<Pla
     throw ApiError.validation({ scheduled_at: ['Set a time before proposing a plan.'] });
   }
 
+  // A draft saved for this afternoon may be sent tomorrow.
+  if (existing.scheduled_at.getTime() <= Date.now()) {
+    throw ApiError.validation({ scheduled_at: ['Pick a time in the future.'] });
+  }
+
   const { otherUserId: recipientId } = await assertCanPlan(viewerId, existing.match_id);
 
   const updated = await prisma.plan.update({
@@ -291,7 +400,7 @@ export async function proposePlan(viewerId: string, planId: string): Promise<Pla
 
   await notifyProposed(updated, recipientId);
 
-  return toView(updated, viewerId);
+  return presentOne(updated, viewerId);
 }
 
 /**
@@ -317,6 +426,12 @@ export async function respondToPlan(
     throw ApiError.badRequest('You cannot respond to your own plan.');
   }
 
+  // Accepting a proposal nobody answered in time would confirm a meeting in
+  // the past. Declining one is still fine.
+  if (accept && existing.scheduled_at && existing.scheduled_at.getTime() <= Date.now()) {
+    throw ApiError.badRequest('The time for that plan has passed.', { status: existing.status });
+  }
+
   const { otherUserId: proposerId } = await assertCanPlan(viewerId, existing.match_id);
 
   const updated = await prisma.plan.update({
@@ -339,10 +454,13 @@ export async function respondToPlan(
     data: { plan_id: updated.id, match_id: updated.match_id },
   });
 
-  return toView(updated, viewerId);
+  return presentOne(updated, viewerId);
 }
 
-/** Either participant may cancel, at any point before completion. */
+/**
+ * Either participant may cancel a plan that was sent, at any point before it
+ * is finished. A draft is deleted instead (see `deleteDraft`).
+ */
 export async function cancelPlan(
   viewerId: string,
   planId: string,
@@ -350,7 +468,20 @@ export async function cancelPlan(
 ): Promise<PlanView> {
   const existing = await loadVisible(viewerId, planId);
 
-  if (existing.status === PlanStatus.completed || existing.status === PlanStatus.cancelled) {
+  if (existing.status === PlanStatus.draft) {
+    // A cancelled plan is visible to both people, so cancelling a draft would
+    // show the other person a plan that was never sent, notes and address
+    // included.
+    throw ApiError.badRequest('That plan was never sent. Delete the draft instead.', {
+      status: existing.status,
+    });
+  }
+
+  if (
+    existing.status === PlanStatus.completed ||
+    existing.status === PlanStatus.cancelled ||
+    existing.status === PlanStatus.declined
+  ) {
     throw ApiError.badRequest('That plan is already finished.', { status: existing.status });
   }
 
@@ -367,19 +498,41 @@ export async function cancelPlan(
     include: PLAN_INCLUDE,
   });
 
-  // Only tell the other person about a plan they could see. Cancelling a draft
-  // would otherwise announce a plan that was never sent.
+  await notify({
+    userId: other,
+    category: 'plan_update',
+    title: 'Plan cancelled',
+    body: reason ?? 'The plan was cancelled.',
+    data: { plan_id: updated.id, match_id: updated.match_id },
+  });
+
+  return presentOne(updated, viewerId);
+}
+
+/**
+ * Throws a draft away. Only its creator can see a draft, so only they can
+ * delete it, and nobody is told: the other person never knew it existed.
+ */
+export async function deleteDraft(viewerId: string, planId: string): Promise<void> {
+  const existing = await loadVisible(viewerId, planId);
+
   if (existing.status !== PlanStatus.draft) {
-    await notify({
-      userId: other,
-      category: 'plan_update',
-      title: 'Plan cancelled',
-      body: reason ?? 'The plan was cancelled.',
-      data: { plan_id: updated.id, match_id: updated.match_id },
+    throw ApiError.badRequest('Only a draft can be deleted. Cancel a plan that was sent.', {
+      status: existing.status,
     });
   }
 
-  return toView(updated, viewerId);
+  // Conditional, so a draft proposed a moment ago in another request is never
+  // deleted after the other person was told about it.
+  const { count } = await prisma.plan.deleteMany({
+    where: { id: planId, creator_id: viewerId, status: PlanStatus.draft },
+  });
+
+  if (count === 0) {
+    throw ApiError.notFound();
+  }
+
+  logger.info({ plan_id: planId }, 'draft plan deleted');
 }
 
 export type PlanTab = 'upcoming' | 'pending' | 'history';
@@ -397,19 +550,24 @@ export async function listPlans(
   const after = options.cursor ? decodeCursor(options.cursor) : null;
   const now = new Date();
 
+  // A proposal whose time passed without an answer can no longer be accepted,
+  // so it is history, like a confirmed plan whose time has passed.
   const tabFilter: Prisma.PlanWhereInput = options.drafts
     ? { status: PlanStatus.draft, creator_id: viewerId }
     : options.tab === 'upcoming'
       ? { status: PlanStatus.confirmed, scheduled_at: { gte: now } }
       : options.tab === 'pending'
-        ? { status: PlanStatus.proposed }
+        ? { status: PlanStatus.proposed, scheduled_at: { gte: now } }
         : options.tab === 'history'
           ? {
               OR: [
                 {
                   status: { in: [PlanStatus.completed, PlanStatus.cancelled, PlanStatus.declined] },
                 },
-                { status: PlanStatus.confirmed, scheduled_at: { lt: now } },
+                {
+                  status: { in: [PlanStatus.confirmed, PlanStatus.proposed] },
+                  scheduled_at: { lt: now },
+                },
               ],
             }
           : { status: { not: PlanStatus.draft } };
@@ -417,7 +575,12 @@ export async function listPlans(
   const rows = await prisma.plan.findMany({
     where: {
       AND: [
-        { match: { OR: [{ user_a_id: viewerId }, { user_b_id: viewerId }] } },
+        {
+          match: {
+            OR: [{ user_a_id: viewerId }, { user_b_id: viewerId }],
+            ...BOTH_ACCOUNTS_ACTIVE,
+          },
+        },
         // A draft never leaks, whichever tab is asked for.
         { OR: [{ status: { not: PlanStatus.draft } }, { creator_id: viewerId }] },
         tabFilter,
@@ -435,7 +598,7 @@ export async function listPlans(
   }));
 
   return {
-    plans: page.items.map((plan) => toView(plan, viewerId)),
+    plans: await present(page.items, viewerId),
     next_cursor: page.next_cursor,
     has_more: page.has_more,
     limit: page.limit,
@@ -443,7 +606,7 @@ export async function listPlans(
 }
 
 export async function getPlan(viewerId: string, planId: string): Promise<PlanView> {
-  return toView(await loadVisible(viewerId, planId), viewerId);
+  return presentOne(await loadVisible(viewerId, planId), viewerId);
 }
 
 /**

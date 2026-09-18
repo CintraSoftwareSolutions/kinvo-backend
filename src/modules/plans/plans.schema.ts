@@ -41,6 +41,14 @@ export const createPlanSchema = z
 
 export const updatePlanSchema = createPlanSchema
   .omit({ match_id: true, propose: true })
+  .extend({
+    /** `null` clears it, to switch to a typed location. */
+    venue_id: z.string().uuid().nullable(),
+    /** `null` clears it, to switch to a venue. */
+    custom_location: z.string().trim().min(1).max(200).nullable(),
+    /** `null` or an empty string clears it. */
+    custom_address: z.string().trim().max(300).nullable(),
+  })
   .partial()
   .refine((value) => Object.keys(value).length > 0, {
     message: 'Provide at least one field to update.',

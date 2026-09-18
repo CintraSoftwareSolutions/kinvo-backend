@@ -1,5 +1,6 @@
 import { MatchStatus, type Prisma, prisma } from '@/db/prisma';
 import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
+import { closePlansOnEndedMatches } from '@modules/plans/ended-matches';
 import { ApiError } from '@utils/api-error';
 import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/compact';
 import { decodeCursor, paginate } from '@utils/cursor';
@@ -29,7 +30,8 @@ import { logger } from '@utils/logger';
  * active match would still sit in both people's lists — visible and frozen,
  * which is right for a match that lapsed and wrong for one the user
  * deliberately cut. Reporting with "also block" once skipped it, and left the
- * person just reported in the reporter's matches.
+ * person just reported in the reporter's matches. Their open plans close with
+ * it, so neither of them has a meeting with the other still under Upcoming.
  *
  * Idempotent — blocking twice is not an error. The user pressed the button
  * again, which is not a state worth an error message.
@@ -46,20 +48,23 @@ export async function blockUser(
   });
 
   // Both directions: whichever way round the pair sits on the match row.
+  const pair: Prisma.MatchWhereInput = {
+    OR: [
+      { user_a_id: blockerId, user_b_id: blockedId },
+      { user_a_id: blockedId, user_b_id: blockerId },
+    ],
+  };
+
   await tx.match.updateMany({
-    where: {
-      status: MatchStatus.active,
-      OR: [
-        { user_a_id: blockerId, user_b_id: blockedId },
-        { user_a_id: blockedId, user_b_id: blockerId },
-      ],
-    },
+    where: { status: MatchStatus.active, ...pair },
     data: {
       status: MatchStatus.unmatched,
       unmatched_at: new Date(),
       unmatched_by_id: blockerId,
     },
   });
+
+  await closePlansOnEndedMatches(tx, pair, blockerId);
 }
 
 export interface BlockView {

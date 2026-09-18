@@ -973,6 +973,86 @@ socket delivers `notification:new`.
 **Verified:** typecheck, lint and format clean. The tests run in CI; this
 machine has no Docker to run them locally.
 
+### 2026-09-18 — Plans: what connecting the app turned up
+
+Found while connecting the app's Plans tab. One commit.
+
+**Cancelling a draft showed it to the other person.** A draft is visible only
+to its creator, but `cancel` turned it into a cancelled plan, and cancelled
+plans are visible to both people: the draft appeared in the other person's
+history, with its notes and address. This is the second half of blocker 11 in
+the 14 September review. **Fix:** `cancel` now refuses a draft, and a new
+`DELETE /plans/{id}` deletes one. Only the creator can, only while it is a
+draft, and nobody is told. The delete is conditional on the row still being a
+draft, so a draft sent a moment ago in another request is never deleted after
+the other person heard about it.
+
+Existing leaked rows can't be cleaned up: nothing records whether a cancelled
+plan was ever proposed. The app had never used plans before, so there should
+be none.
+
+**Plans outlived the match.** Unmatching or blocking left the pair's plans
+under Upcoming and Pending for both of them, with nothing either could do
+about them. The reminder sweep already skipped them, so the plans said a
+meeting was on while the reminders said it wasn't. **Fix:**
+`closePlansOnEndedMatches`, called inside the unmatch transaction and inside
+`blockUser` (so reporting with "also block" does it too), cancels proposed and
+upcoming confirmed plans and deletes drafts. Past plans are left to the
+completion sweep. Nobody is notified: the match ending is the news, and a
+"plan cancelled" push straight after a block would hint at the block. It lives
+in its own file because the matches service importing the plans service would
+make an import cycle.
+
+**Plans didn't say who they were with.** A plan carried `match_id` only, so a
+list of plans needed a request per row to name the other person. **Fix:** every
+plan carries `user`, the other person's `user_compact`, with photos and
+presence looked up once per page. Plans with an account that was deleted or
+suspended are no longer listed or readable (404), as the matches list already
+hides them: showing them would tell those accounts apart from ones that never
+existed.
+
+**A proposal whose time passed could still be accepted.** Nothing stopped it,
+which confirmed a meeting in the past, and the proposal stayed in Pending, and
+on the Plans badge, forever. **Fix:** accepting one is refused (declining is
+still fine). Pending and the badge count leave it out, and it lists under
+History, as a confirmed plan whose time passed already did. Sending a draft
+whose time has passed is refused the same way creating one always was.
+
+**Editing a proposal told nobody.** The creator could change the time or place
+after the other person had read it, and they would answer a plan they hadn't
+seen. **Fix:** editing a proposal notifies the other person ("Plan changed").
+Editing a draft still doesn't.
+
+**Editing could break a plan.** A `venue_id` that didn't exist reached the
+database and failed as a 500, and nothing stopped an edit from leaving a plan
+with no place at all. There was also no way to switch between a venue and a
+typed location, because neither field could be cleared. **Fix:** the venue is
+checked as it is on create (404 if it isn't listed). `venue_id` and
+`custom_location` accept `null` to switch between them, and one must remain
+(`VALIDATION_FAILED`). `cancel` also refuses a declined plan now, like a
+completed or cancelled one: there is nothing left to cancel.
+
+**Docs:** `docs/openapi.yaml` and `docs/realtime.json` re-exported. The
+realtime document had been missing `notification:new` since that event was
+added to the catalogue on 2026-09-17.
+
+**Tests** (`tests/integration/plans/plans.test.ts`):
+
+- A draft is deleted, not cancelled. Only drafts can be deleted, and only by
+  their creator.
+- Editing a proposal notifies the other person, and editing a draft doesn't.
+- You can switch between a venue and a typed location, but one must remain.
+  An unknown venue gets a 404.
+- Each side sees the other person on the plan.
+- A suspended account's plan is hidden.
+- A proposal whose time has passed can be declined but not accepted. It moves
+  to History and leaves the badge.
+- A draft whose time has passed can't be sent.
+- Unmatching and blocking close the pair's open plans, and tell nobody.
+
+**Verified:** typecheck, lint and format clean. The tests run in CI; this
+machine has no Docker to run them locally.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started
