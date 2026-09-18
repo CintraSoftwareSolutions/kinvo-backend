@@ -1148,6 +1148,22 @@ trusted contacts can receive anything.
 re-exported. The tests run in CI; this machine has no Docker to run them
 locally.
 
+### 2026-09-18 — Two details found building the Safety screens
+
+**A contact's phone number or email couldn't be taken away.** The edit schema
+required a valid value in each field sent, so an edit could never clear one.
+**Fix:** an empty phone, email or relationship now clears it. A contact must
+still keep a phone or an email, as when it was created.
+
+**The emergency email said exactly where the user was.** The app only asks for
+approximate location, so the map pin is rough. **Fix:** it now says "Roughly
+where they were".
+
+**Tests:** in `tests/integration/safety/safety.test.ts`, an edit clears a phone
+number, and can't leave a contact with no way to reach them.
+
+**Verified:** typecheck, lint and format clean. The tests run in CI.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

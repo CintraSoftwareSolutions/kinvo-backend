@@ -159,7 +159,8 @@ export function emergencyAlertEmail(input: {
     },
     ...(coordinates
       ? [
-          { text: 'Where they were when they pressed it:' },
+          // The app only knows roughly where the phone is, so say so.
+          { text: 'Roughly where they were when they pressed it:' },
           { text: mapsLink(coordinates), href: mapsLink(coordinates) },
         ]
       : []),

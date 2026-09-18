@@ -62,7 +62,15 @@ export const createContactSchema = z
   })
   .strict();
 
+/**
+ * An empty phone, email or relationship clears it, so an edit can take one
+ * away. The contact must still keep a phone or an email.
+ */
 export const updateContactSchema = createContactSchema
+  .extend({
+    phone: z.union([z.literal(''), z.string().trim().min(5).max(32)]),
+    email: z.union([z.literal(''), z.string().trim().email().max(320)]),
+  })
   .partial()
   .refine((value) => Object.keys(value).length > 0, {
     message: 'Provide at least one field to update.',

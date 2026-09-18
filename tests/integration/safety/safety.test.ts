@@ -440,6 +440,31 @@ describe('trusted contacts', () => {
     expect(response.status).toBe(400);
   });
 
+  it('takes a phone number or email away when an edit sends it empty', async () => {
+    const user = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const created = await api
+      .post(`${SAFETY}/contacts`)
+      .set(authHeader(user.tokens))
+      .send({ name: 'Sister', phone: '+447700900123', email: 'sister@example.com' });
+    const id = created.body.data.id as string;
+
+    const withoutPhone = await api
+      .patch(`${SAFETY}/contacts/${id}`)
+      .set(authHeader(user.tokens))
+      .send({ phone: '', relationship: '' });
+    expect(withoutPhone.status).toBe(200);
+    expect(withoutPhone.body.data.phone).toBeNull();
+    expect(withoutPhone.body.data.email).toBe('sister@example.com');
+
+    // One way to reach them must stay.
+    const unreachable = await api
+      .patch(`${SAFETY}/contacts/${id}`)
+      .set(authHeader(user.tokens))
+      .send({ email: '' });
+    expect(unreachable.status).toBe(400);
+    expectErrorEnvelope(unreachable.body, 'VALIDATION_FAILED');
+  });
+
   it('caps the number of contacts', async () => {
     const user = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
 
