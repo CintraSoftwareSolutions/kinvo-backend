@@ -173,7 +173,28 @@ A leak here is not a data leak — it is a stranger appearing on someone's camer
 - Duration is measured from `answered_at`, not `started_at`. A call that rang for forty seconds and was picked up for ten lasted ten. Unanswered calls carry `null`, not `0` — zero reads as a call that connected silently.
 - Hang-up is **idempotent**. Both apps send it, and the second must not surface an error.
 - Safety actions are recorded **before** anything else happens, because the record is the point: a pattern of flags is what moderation acts on. `end_and_report` ends the call first — someone reaching for it wants the call to stop. `note` stays optional; a person reaching for a safety control mid-call cannot write an explanation.
-  **Subscriptions (spec §5.10).** Never grant entitlement from a client claim.
+  **Admin surface.** The admin PANEL is a separate codebase. What lives here are
+  the endpoints it calls, and they are role-gated with `requireRole`, answering
+  **403** rather than the block-style 404 — a moderator surface is not something
+  to hide from the person holding the role.
+
+- They follow the existing convention (`/reports/review`, `/moderation/flags`, `/verification/review`) rather than a separate `/admin/*` namespace. Three conventions would be worse than two. They carry the `Admin` tag in the generated contract so the panel finds them in one place.
+- **The decision lives on this side, never in the panel.** A panel writing `status = approved` straight into a table skips the second-review check, the badge recomputation, the audit entry and the notification. Every state change a moderator makes goes through a service that does all four.
+- **A second review answers 409**, not an overwrite. Two reviewers opening the same queue is normal, not an edge case.
+- **Every admin decision writes an `AdminAuditLog` row** — actor, action, target, metadata, IP. Written after the decision, not inside its transaction: a failed log must not roll back a review that already happened, and a review with no log is recoverable while a lost decision is not.
+- Review queues are ordered **oldest first**, unlike every other list. A queue is work to get through; newest-first strands whoever has waited longest.
+
+**Provider webhooks.** `/webhooks/video` is the only one, and its SIGNATURE is
+its authentication — there is no bearer token. Twilio signs the request URL plus
+the sorted form parameters, NOT the raw body the way Stripe did, so the global
+`express.urlencoded` parser is correct and no raw-body carve-out is needed.
+Validation uses the account AUTH TOKEN, not the API key secret.
+
+- Without credentials the provider stub **refuses every callback**, and that is right: this endpoint ends calls, so accepting unverified ones would let anyone hang up anyone by guessing a room name.
+- It exists to close the gap where a call is answered and both clients then vanish — nothing else ever sends the hang-up, and the row would read `active` for ever. `sweepStuckCalls` is the backstop when the callback never arrives.
+- It cannot touch entitlement, and a test in the subscriptions suite asserts so.
+
+**Subscriptions (spec §5.10).** Never grant entitlement from a client claim.
 
 Payment processing is **not in this codebase**. There is no processor, no checkout,
 no billing portal, no webhook and no receipt validation. Purchasing happens in the

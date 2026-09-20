@@ -596,4 +596,136 @@ export async function sweepRingingCalls(now: Date = new Date()): Promise<number>
   return result.count;
 }
 
-export { RINGING_TIMEOUT_MS, REQUIRE_VERIFICATION_TO_CALL, otherUserId };
+/**
+ * The longest a call may stay `active` before it is closed as abandoned.
+ *
+ * The backstop for a call nobody ever ended. Both apps normally send a hang-up,
+ * and the provider's `room-ended` callback closes what they miss — but if the
+ * provider is not configured, or a callback is lost, or two phones die at once,
+ * the row would otherwise read `active` forever. It would sit at the top of
+ * both people's history claiming to be in progress.
+ *
+ * Four hours is far longer than any real call and short enough that an
+ * abandoned one is tidied the same day.
+ */
+const MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
+
+/** Twilio's status callback event names. Only the terminal one changes state. */
+const ROOM_ENDED = 'room-ended';
+
+/**
+ * Applies a verified status callback from the video provider.
+ *
+ * THE GAP THIS CLOSES: a call is `active` from the moment it is answered until
+ * somebody sends a hang-up. If both clients disappear — crash, dead battery,
+ * tunnel — nothing ever sends one, and the call stays `active` indefinitely.
+ * The provider knows the room ended; this is how it tells us.
+ *
+ * Idempotent by state rather than by an event ledger: ending an already-ended
+ * call is a no-op, so a retried callback costs nothing. Providers retry
+ * routinely, and a ledger table would be bookkeeping for a question the row
+ * already answers.
+ */
+export async function applyRoomEvent(event: {
+  type: string;
+  roomName: string;
+}): Promise<{ applied: boolean }> {
+  if (event.type !== ROOM_ENDED) {
+    // Participant joins and leaves are not state changes we store. Logged at
+    // debug rather than ignored silently, so an unexpected event type is
+    // findable without being noisy.
+    logger.debug({ event: event.type, room: event.roomName }, 'video callback ignored');
+    return { applied: false };
+  }
+
+  const call = await prisma.callSession.findUnique({
+    where: { room_name: event.roomName },
+    include: CALL_INCLUDE,
+  });
+
+  if (!call) {
+    // A room we have no record of. Not an error: rooms can outlive their call
+    // row after a database reset, and answering 200 stops the provider
+    // retrying something nothing will ever act on.
+    logger.warn({ room: event.roomName }, 'video callback for an unknown room');
+    return { applied: false };
+  }
+
+  if (call.status !== CallStatus.ringing && call.status !== CallStatus.active) {
+    return { applied: false };
+  }
+
+  const now = new Date();
+
+  const ended = await prisma.callSession.update({
+    where: { id: call.id },
+    data: {
+      status: call.answered_at ? CallStatus.ended : CallStatus.missed,
+      ended_at: now,
+      // Nobody hung up — the room ended. Leaving this null is the honest
+      // record, and the app shows "call ended" rather than naming a person.
+      ended_by_id: null,
+      duration_seconds: call.answered_at
+        ? Math.max(0, Math.round((now.getTime() - call.answered_at.getTime()) / 1000))
+        : null,
+    },
+    include: CALL_INCLUDE,
+  });
+
+  // Both sides, because neither of them is the one who ended it.
+  for (const participant of [ended.match.user_a, ended.match.user_b]) {
+    emitCallEnded(participant.id, ended.id, ended.duration_seconds);
+  }
+
+  logger.info(
+    { call_id: ended.id, duration_seconds: ended.duration_seconds },
+    'call ended by provider callback',
+  );
+
+  return { applied: true };
+}
+
+/**
+ * Closes calls that were answered and never ended.
+ *
+ * The backstop described on MAX_CALL_DURATION_MS. Unlike `sweepRingingCalls`,
+ * this one is NOT purely cosmetic: nothing else closes an abandoned active
+ * call when the provider callback does not arrive, so without it the row stays
+ * `active` forever.
+ */
+export async function sweepStuckCalls(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - MAX_CALL_DURATION_MS);
+
+  const stuck = await prisma.callSession.findMany({
+    where: {
+      status: CallStatus.active,
+      // Measured from when it was answered, matching how duration is measured.
+      answered_at: { lt: cutoff },
+    },
+    select: { id: true, answered_at: true },
+  });
+
+  if (stuck.length === 0) {
+    return 0;
+  }
+
+  for (const call of stuck) {
+    await prisma.callSession.update({
+      where: { id: call.id },
+      data: {
+        status: CallStatus.ended,
+        ended_at: now,
+        ended_by_id: null,
+        duration_seconds: call.answered_at
+          ? Math.max(0, Math.round((now.getTime() - call.answered_at.getTime()) / 1000))
+          : null,
+      },
+    });
+  }
+
+  logger.info({ count: stuck.length }, 'closed abandoned calls');
+
+  return stuck.length;
+}
+
+export { RINGING_TIMEOUT_MS, MAX_CALL_DURATION_MS, REQUIRE_VERIFICATION_TO_CALL, otherUserId };

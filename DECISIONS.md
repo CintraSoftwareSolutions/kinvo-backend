@@ -1276,6 +1276,65 @@ characters, since a shorter bio never counted.
 **Verified:** typecheck, lint and format clean, unit tests pass locally. The
 integration tests run in CI.
 
+### 2026-09-20 — Video callback and the verification review surface
+
+Both asked for by the backend developer taking the codebase on.
+
+**The video gap was not the endpoints — it was what closes a call.** The seven
+call endpoints were complete. What was missing is that a call goes `active`
+when answered and stays that way until somebody sends a hang-up. If both
+clients vanish — crash, dead battery, tunnel — nothing ever does, and the row
+reads `active` for ever at the top of both histories. `sweepRingingCalls` only
+ever handled `ringing`.
+
+So: `POST /webhooks/video` for the provider's `room-ended` event, and
+`sweepStuckCalls` as the backstop for when that callback never arrives —
+unconfigured provider, lost request, anything. The sweep is the one in this
+codebase that is NOT merely cosmetic.
+
+Twilio signs the request URL plus sorted form parameters rather than raw bytes,
+so unlike the old Stripe webhook this needs no raw-body carve-out in `app.ts`.
+It validates against the account auth token, not the API key secret — passing
+the key secret fails every time in a way that reads like a misconfigured URL.
+
+The stub refuses every callback when Twilio is unconfigured. Nothing is lost:
+no account means no callbacks, and the sweep closes abandoned calls anyway.
+Accepting unverified ones would let anyone end anyone's call by guessing a
+room name.
+
+**`reviewVerification` already existed and had no route.** The transition was
+written in Batch 4 and never exposed. Added `GET /verification/review` and
+`POST /verification/{id}/review`, role-gated, on the `/reports/review`
+convention rather than a new `/admin/*` namespace — three conventions would be
+worse than two. They carry an `Admin` tag in the contract so the panel finds
+them together.
+
+The decision stays on this side rather than letting the panel write the row.
+That is what makes the rules hold: a second review 409s instead of
+overwriting, the badge is recomputed from the records, the action is audited,
+and the user is told. A panel setting `status = approved` directly would skip
+all four — and this badge is a hard discovery filter and the gate on Cuddle
+mode, so who approved an account has to be answerable later.
+
+`AdminAuditLog` has existed since Batch 1 and had never been written to. It is
+now, with actor, action, target, metadata and IP.
+
+**A new `verification` notification category**, rather than reusing
+`moderation`. Someone who mutes moderation notices would otherwise never hear
+that their ID was approved, which is the one thing they are actively waiting
+for.
+
+**The GIST-index trap fired for the second time.** `prisma migrate dev`
+generated the enum addition plus four `DROP INDEX` statements against the
+PostGIS indexes. Stripped again, with the reason recorded in the migration
+file. This will keep happening on every generated migration; reading the SQL
+before applying it is the only defence.
+
+**Tests:** 42 in the calls suite (was 32), 14 new for verification review, and
+the subscriptions assertion that the webhook namespace grants nothing was
+narrowed from "no webhooks at all" to the specific payment paths, plus a new
+test that the one webhook which does exist cannot move a tier.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

@@ -273,6 +273,7 @@ const ALL_CATEGORIES: NotificationCategory[] = [
   'new_message',
   'plan_update',
   'call',
+  'verification',
   'safety',
   'moderation',
   'subscription',

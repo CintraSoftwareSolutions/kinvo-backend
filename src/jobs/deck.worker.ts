@@ -5,7 +5,7 @@ import { generateDeck, usersNeedingDecks } from '@modules/discovery/deck.service
 import { sweepExpiredMatches } from '@modules/matches/matches.service';
 import { sendPlanReminders } from '@modules/notifications/reminders.service';
 import { sweepLiveLocations } from '@modules/safety/location.service';
-import { sweepRingingCalls } from '@modules/calls/calls.service';
+import { sweepRingingCalls, sweepStuckCalls } from '@modules/calls/calls.service';
 import { sweepCompletedPlans } from '@modules/plans/plans.service';
 import { sweepExpiredSubscriptions } from '@modules/subscriptions/subscriptions.service';
 import { logger } from '@utils/logger';
@@ -50,11 +50,17 @@ export function startDeckWorker(): Worker<DeckGenerationJob> {
         // history until tomorrow. Bookkeeping either way: the service already
         // reports a timed-out call as missed at read time, so this being late
         // changes nothing a user sees.
-        const [reminded, trails, completed, rungOut] = await Promise.all([
+        // sweepStuckCalls is the one sweep here that is NOT merely cosmetic.
+        // A call that was answered and never ended has nothing else to close
+        // it: the provider callback handles the normal case, but if Twilio is
+        // unconfigured or a callback is lost, the row reads `active` forever
+        // and sits at the top of both people's history claiming to be live.
+        const [reminded, trails, completed, rungOut, abandoned] = await Promise.all([
           sendPlanReminders(),
           sweepLiveLocations(),
           sweepCompletedPlans(),
           sweepRingingCalls(),
+          sweepStuckCalls(),
         ]);
 
         return {
@@ -62,6 +68,7 @@ export function startDeckWorker(): Worker<DeckGenerationJob> {
           trails_pruned: trails,
           plans_completed: completed,
           calls_missed: rungOut,
+          calls_abandoned: abandoned,
         };
       }
 

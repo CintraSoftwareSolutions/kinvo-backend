@@ -1,0 +1,23 @@
+-- Adds the `verification` notification category.
+--
+-- A verification result is neither a moderation action nor a system notice.
+-- Filing it under `moderation` would mean someone who mutes moderation notices
+-- never hears that their ID was approved — which is the one thing they are
+-- actively waiting for.
+--
+-- WHAT WAS REMOVED FROM THIS FILE, and must stay removed:
+--
+-- `prisma migrate dev` also generated four statements dropping the PostGIS GIST
+-- indexes on profiles, venues, emergency_events and live_location_pings. That is
+-- not drift. Those columns are `Unsupported("geography")` because Prisma cannot
+-- model them, so it cannot see their indexes either and reads every one as
+-- something to remove.
+--
+-- Applying those drops costs nothing at migrate time and turns every radius
+-- query into a sequential scan — the deck builder, venue search and the safety
+-- trail all go through them. A silent full-table scan on the hottest query in
+-- the product, with no error to notice.
+--
+-- This is the second time it has happened; see DECISIONS.md. Always read
+-- generated SQL before applying it.
+ALTER TYPE "notification_category" ADD VALUE 'verification';

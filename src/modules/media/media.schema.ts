@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { PAGINATION } from '@config/constants';
+
 import { MAX_PHOTOS } from './photos.service';
 
 /** Zod schemas for the media and verification endpoints (spec §0.5). */
@@ -73,3 +75,48 @@ export type AddPhotoBody = z.infer<typeof addPhotoSchema>;
 export type ReorderPhotosBody = z.infer<typeof reorderPhotosSchema>;
 export type StartVerificationBody = z.infer<typeof startVerificationSchema>;
 export type AttachDocumentBody = z.infer<typeof attachDocumentSchema>;
+
+/**
+ * Review queue filter (Batch 15 — verification review).
+ *
+ * Defaults to `pending`, because a queue is for work outstanding. The other
+ * statuses are readable so the panel can show what was decided and by whom.
+ */
+export const reviewQueueQuerySchema = z
+  .object({
+    status: z.enum(['pending', 'approved', 'rejected']).optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(PAGINATION.MAX_LIMIT)
+      .optional()
+      .default(PAGINATION.DEFAULT_LIMIT),
+    cursor: z.string().min(1).max(512).optional(),
+  })
+  .strict();
+
+/**
+ * A decision.
+ *
+ * `reason` is required when declining and forbidden when approving — a
+ * rejection with no reason leaves the user with nothing to fix, and an approval
+ * carrying one would be stored against a record that was accepted.
+ */
+export const reviewDecisionSchema = z
+  .object({
+    approve: z.boolean(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict()
+  .refine((body) => body.approve || Boolean(body.reason), {
+    message: 'Give a reason when declining a verification.',
+    path: ['reason'],
+  })
+  .refine((body) => !body.approve || body.reason === undefined, {
+    message: 'An approved verification takes no reason.',
+    path: ['reason'],
+  });
+
+export type ReviewQueueQuery = z.infer<typeof reviewQueueQuerySchema>;
+export type ReviewDecisionBody = z.infer<typeof reviewDecisionSchema>;

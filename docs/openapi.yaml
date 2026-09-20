@@ -109,6 +109,9 @@ tags:
     description: Product catalogue and your current subscription
   - name: Calls
     description: Video call lifecycle, room tokens, in-call safety
+  - name: Admin
+    description: Moderator and admin surface. Role-gated, called by the separate
+      admin panel.
   - name: Entitlements
     description: Plan features and daily quotas
   - name: Modes
@@ -3270,6 +3273,220 @@ paths:
                 error:
                   code: AUTH_TOKEN_INVALID
                   message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "409":
+          description: CONFLICT — That already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: CONFLICT
+                  message: That already exists.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/verification/review:
+    get:
+      tags:
+        - Admin
+      summary: The verification queue
+      description: "Submitted verifications awaiting a decision. **Oldest first**,
+        unlike every other list in this API: a review queue is work to get
+        through, and newest-first leaves the person who has waited longest at
+        the bottom forever. Half-finished wizards never appear — they are not
+        waiting on anybody. Each row carries a short-lived presigned
+        `document_url` from the VERIFICATION bucket, minted per request and
+        never stored; it is null for social verifications, which have no
+        document. Requires the moderator or admin role. Query: `status`
+        (pending, approved, rejected — defaults to pending), `limit`, `cursor`."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/verification/{id}/review:
+    post:
+      tags:
+        - Admin
+      summary: Approve or decline a verification
+      description: "The decision lives here rather than in the admin panel, so the
+        rules hold wherever the call comes from: a second review answers **409**
+        rather than overwriting the first, the badge is recomputed from the
+        records instead of being set directly, the action is written to the
+        admin audit log with the reviewer and their IP, and the user is
+        notified. `reason` is REQUIRED when declining — a rejection with nothing
+        to act on is not a decision the user can respond to — and refused when
+        approving. Requires the moderator or admin role."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approve:
+                  type: boolean
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+              required:
+                - approve
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
                   details: null
         "404":
           description: NOT_FOUND — We could not find what you were looking for.
@@ -9251,6 +9468,64 @@ paths:
                 error:
                   code: NOT_FOUND
                   message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/webhooks/video:
+    post:
+      tags:
+        - Calls
+      summary: Video provider status callback
+      description: "**Not for clients.** The video provider posts room lifecycle
+        events here; its `X-Twilio-Signature` over the request URL and form
+        parameters is the authentication, and there is no bearer token. Answers
+        **403** to a missing or invalid signature so the provider flags the
+        endpoint rather than retrying a forgery. This is what closes a call when
+        the room ends without either app sending a hang-up — otherwise a call
+        whose participants both vanish stays `active` forever. Idempotent:
+        ending an already-ended call is a no-op, so retries cost nothing. It
+        cannot touch entitlement, and a test asserts so."
+      security: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
                   details: null
         "429":
           description: RATE_LIMITED — Too many requests. Please try again shortly.

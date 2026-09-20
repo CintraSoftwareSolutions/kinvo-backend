@@ -1,13 +1,15 @@
 import type { Request, Response } from 'express';
 
-import { type VerificationMethod } from '@/db/prisma';
+import { type VerificationMethod, type VerificationStatus } from '@/db/prisma';
 import { requireUser } from '@middleware/authenticate';
-import { sendSuccess } from '@utils/response';
+import { sendList, sendSuccess } from '@utils/response';
 import type {
   AddPhotoBody,
   AttachDocumentBody,
   CreateUploadBody,
   ReorderPhotosBody,
+  ReviewDecisionBody,
+  ReviewQueueQuery,
   StartVerificationBody,
 } from './media.schema';
 import * as mediaService from './media.service';
@@ -111,4 +113,39 @@ export async function submitVerification(req: Request, res: Response): Promise<v
   const user = requireUser(req);
   const status = await verificationService.submitVerification(user.id, req.params.id!);
   sendSuccess(res, { ...status });
+}
+
+// --- verification review (moderator / admin) -------------------------------
+
+export async function listVerificationsForReview(req: Request, res: Response): Promise<void> {
+  const { status, limit, cursor } = req.query as unknown as ReviewQueueQuery;
+
+  const result = await verificationService.listForReview({
+    status: status as VerificationStatus | undefined,
+    limit,
+    cursor,
+  });
+
+  sendList(res, result.verifications, {
+    next_cursor: result.next_cursor,
+    has_more: result.has_more,
+    limit: result.limit,
+  });
+}
+
+export async function reviewVerification(req: Request, res: Response): Promise<void> {
+  const reviewer = requireUser(req);
+  const body = req.body as ReviewDecisionBody;
+
+  const result = await verificationService.reviewVerification({
+    verificationId: req.params.id!,
+    reviewerId: reviewer.id,
+    approve: body.approve,
+    rejectionReason: body.reason,
+    // Recorded on the audit entry. `req.ip` is only meaningful because app.ts
+    // sets `trust proxy`; behind CloudFront it would otherwise be the edge.
+    ipAddress: req.ip ?? null,
+  });
+
+  sendSuccess(res, { ...result });
 }

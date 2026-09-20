@@ -68,6 +68,25 @@ export interface VideoProvider {
    * room than the one the app connects to.
    */
   issueToken(options: { roomName: string; userId: string }): VideoToken;
+
+  /**
+   * Verifies a status callback really came from the provider.
+   *
+   * Twilio signs the REQUEST URL plus the POST parameters sorted by name — not
+   * the raw body, the way Stripe does. So the global urlencoded parser is fine
+   * here and no raw-body carve-out is needed in `app.ts`; the parsed params ARE
+   * what the signature covers.
+   *
+   * Validation uses the ACCOUNT AUTH TOKEN, not the API key secret. Twilio signs
+   * webhooks with the account credential regardless of which key minted the
+   * tokens, and passing the key secret here fails every time in a way that looks
+   * like a misconfigured URL.
+   */
+  verifyWebhook(options: {
+    signature: string;
+    url: string;
+    params: Record<string, string>;
+  }): boolean;
 }
 
 function hasCredentials(): boolean {
@@ -107,6 +126,16 @@ const twilioVideoProvider: VideoProvider = {
       expires_at: new Date(Date.now() + VIDEO_TOKEN_TTL_SECONDS * 1000),
     };
   },
+
+  verifyWebhook({ signature, url, params }) {
+    // The account auth token, deliberately — see the interface comment.
+    if (!env.TWILIO_AUTH_TOKEN) {
+      logger.error('cannot verify a video webhook without TWILIO_AUTH_TOKEN');
+      return false;
+    }
+
+    return twilio.validateRequest(env.TWILIO_AUTH_TOKEN, signature, url, params);
+  },
 };
 
 /**
@@ -141,6 +170,22 @@ const stubVideoProvider: VideoProvider = {
       identity: userId,
       expires_at: new Date(Date.now() + VIDEO_TOKEN_TTL_SECONDS * 1000),
     };
+  },
+
+  /**
+   * Refuses every callback, and that is the correct answer.
+   *
+   * Without credentials there is no shared secret to verify against, so nothing
+   * can be proved about who sent the request — and this endpoint ENDS CALLS.
+   * Accepting unverified callbacks would let anyone hang up anyone's call by
+   * guessing a room name.
+   *
+   * Nothing is lost by refusing: with no Twilio account there are no Twilio
+   * callbacks, and `sweepStuckCalls` closes abandoned calls either way.
+   */
+  verifyWebhook() {
+    logger.warn('video webhook refused — Twilio is not configured, so nothing can be verified');
+    return false;
   },
 };
 

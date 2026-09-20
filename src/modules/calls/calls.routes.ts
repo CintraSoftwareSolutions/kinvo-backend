@@ -74,3 +74,15 @@ callsRouter.post(
   validate({ params: callIdParamSchema, body: safetyActionSchema }),
   asyncHandler(controller.recordSafetyAction),
 );
+
+/**
+ * The video provider's status callback.
+ *
+ * Mounted apart from `callsRouter` on purpose: that router applies
+ * `authenticate` and `requireOnboarded` to everything under it, and the
+ * provider carries no bearer token and is not a user. Its signature is the
+ * authentication, checked in the controller before any field is read.
+ */
+export const callsWebhookRouter: Router = Router();
+
+callsWebhookRouter.post('/video', asyncHandler(controller.handleVideoWebhook));

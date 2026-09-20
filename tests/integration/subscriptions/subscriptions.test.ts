@@ -115,9 +115,15 @@ describe('nothing reachable over HTTP can grant entitlement (spec §5.10)', () =
     `${SUBS}/checkout`,
     `${SUBS}/portal`,
     `${SUBS}/restore`,
-    // No webhook namespace at all. Whoever takes the payment reports it to
-    // whatever they report it to; this API has no ear for it.
-    `${API_PREFIX}/webhooks/any`,
+    // No PAYMENT webhook. The namespace itself is no longer empty — the video
+    // provider's status callback lives at /webhooks/video — so this asserts the
+    // specific paths a payment provider would post to, rather than the whole
+    // prefix. A callback that ends a video call cannot grant entitlement; one
+    // that reports a purchase could, and there is none.
+    `${API_PREFIX}/webhooks/stripe`,
+    `${API_PREFIX}/webhooks/apple`,
+    `${API_PREFIX}/webhooks/google`,
+    `${API_PREFIX}/webhooks/revenuecat`,
   ])('POST %s does not exist', async (path) => {
     const user = await createAuthenticatedUser();
 
@@ -127,6 +133,27 @@ describe('nothing reachable over HTTP can grant entitlement (spec §5.10)', () =
       .send({ product_slug: 'advanced_monthly', tier: 'advanced' });
 
     expect(response.status).toBe(404);
+  });
+
+  it('the one webhook that does exist cannot touch entitlement', async () => {
+    const user = await createAuthenticatedUser();
+
+    const before = await api.get(`${API_PREFIX}/me/entitlements`).set(authHeader(user.tokens));
+
+    // Unsigned, and carrying every field a forger might hope means something.
+    const response = await api.post(`${API_PREFIX}/webhooks/video`).send({
+      StatusCallbackEvent: 'room-ended',
+      RoomName: 'kinvo-call-anything',
+      tier: 'advanced',
+      product_slug: 'advanced_yearly',
+    });
+
+    // Refused for want of a signature, and the tier is untouched either way.
+    expect(response.status).toBe(403);
+
+    const after = await api.get(`${API_PREFIX}/me/entitlements`).set(authHeader(user.tokens));
+    expect(after.body.data.tier).toBe(before.body.data.tier);
+    expect(after.body.data.tier).toBe('free');
   });
 
   it('ignores the denormalised tier column entirely', async () => {

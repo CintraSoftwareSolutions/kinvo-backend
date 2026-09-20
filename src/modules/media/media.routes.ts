@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '@middleware/authenticate';
+import { requireRole } from '@middleware/require-role';
 import { validate } from '@middleware/validate';
 import { asyncHandler } from '@utils/async-handler';
 import * as controller from './media.controller';
@@ -10,6 +11,8 @@ import {
   createUploadSchema,
   photoIdParamSchema,
   reorderPhotosSchema,
+  reviewDecisionSchema,
+  reviewQueueQuerySchema,
   startVerificationSchema,
   uploadIdParamSchema,
   verificationIdParamSchema,
@@ -105,4 +108,29 @@ verificationRouter.post(
   '/:id/submit',
   validate({ params: verificationIdParamSchema }),
   asyncHandler(controller.submitVerification),
+);
+
+/**
+ * Verification review (Batch 15).
+ *
+ * The admin PANEL is a separate codebase; these are the endpoints it calls.
+ * Role-gated rather than answering the block-style 404, matching
+ * `/reports/review` — a moderator surface is not something to hide from the
+ * person holding the role, and the role check is the honest refusal.
+ *
+ * Mounted BEFORE `/:id` routes would be, so `review` is never parsed as a
+ * verification id.
+ */
+verificationRouter.get(
+  '/review',
+  requireRole('moderator', 'admin'),
+  validate({ query: reviewQueueQuerySchema }),
+  asyncHandler(controller.listVerificationsForReview),
+);
+
+verificationRouter.post(
+  '/:id/review',
+  requireRole('moderator', 'admin'),
+  validate({ params: verificationIdParamSchema, body: reviewDecisionSchema }),
+  asyncHandler(controller.reviewVerification),
 );

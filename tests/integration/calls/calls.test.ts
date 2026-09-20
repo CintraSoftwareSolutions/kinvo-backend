@@ -1,6 +1,7 @@
 import { API_PREFIX } from '@config/constants';
 import { CallStatus, MatchStatus, Mode, prisma } from '@/db/prisma';
 import { VIDEO_TOKEN_TTL_SECONDS } from '@/providers/video.provider';
+import { applyRoomEvent, sweepStuckCalls } from '@modules/calls/calls.service';
 import { setEmailProvider } from '@modules/notifications/providers';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader } from '../../helpers/auth';
@@ -581,5 +582,177 @@ describe('auth and validation', () => {
     const response = await api.get(`${CALLS}/not-a-uuid/token`).set(authHeader(a.tokens));
 
     expect(response.status).toBe(400);
+  });
+});
+
+describe('the provider status callback', () => {
+  const WEBHOOK = `${API_PREFIX}/webhooks/video`;
+
+  async function answeredCall() {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const callId = started.body.data.call.id as string;
+    await api.post(`${CALLS}/${callId}/answer`).set(authHeader(pair.b.tokens));
+    return { ...pair, call_id: callId };
+  }
+
+  it('refuses a callback with no signature', async () => {
+    const { call_id } = await answeredCall();
+    const call = await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } });
+
+    const response = await api
+      .post(WEBHOOK)
+      .send({ StatusCallbackEvent: 'room-ended', RoomName: call.room_name });
+
+    // Without a signature nothing can be proved about who sent this, and this
+    // endpoint ENDS CALLS. Accepting it would let anyone hang up anyone.
+    expect(response.status).toBe(403);
+
+    const after = await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } });
+    expect(after.status).toBe(CallStatus.active);
+  });
+
+  it('refuses a forged signature', async () => {
+    const { call_id } = await answeredCall();
+    const call = await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } });
+
+    const response = await api
+      .post(WEBHOOK)
+      .set('x-twilio-signature', 'not-a-real-signature')
+      .send({ StatusCallbackEvent: 'room-ended', RoomName: call.room_name });
+
+    expect(response.status).toBe(403);
+
+    const after = await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } });
+    expect(after.status).toBe(CallStatus.active);
+  });
+});
+
+describe('abandoned calls are closed (the gap the callback exists to fill)', () => {
+  it('ends a call that was answered and never hung up', async () => {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const callId = started.body.data.call.id as string;
+    await api.post(`${CALLS}/${callId}/answer`).set(authHeader(pair.b.tokens));
+
+    // Both phones died five hours ago. Nothing ever sent a hang-up.
+    await prisma.callSession.update({
+      where: { id: callId },
+      data: { answered_at: new Date(Date.now() - 5 * 60 * 60 * 1000) },
+    });
+
+    expect(await sweepStuckCalls()).toBe(1);
+
+    const after = await prisma.callSession.findUniqueOrThrow({ where: { id: callId } });
+    expect(after.status).toBe(CallStatus.ended);
+    // Nobody hung up, so nobody is recorded as having done so.
+    expect(after.ended_by_id).toBeNull();
+    expect(after.duration_seconds).toBeGreaterThan(0);
+  });
+
+  it('leaves a call that is genuinely still in progress', async () => {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const callId = started.body.data.call.id as string;
+    await api.post(`${CALLS}/${callId}/answer`).set(authHeader(pair.b.tokens));
+
+    expect(await sweepStuckCalls()).toBe(0);
+
+    const after = await prisma.callSession.findUniqueOrThrow({ where: { id: callId } });
+    expect(after.status).toBe(CallStatus.active);
+  });
+
+  it('applies a verified room-ended event', async () => {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const callId = started.body.data.call.id as string;
+    await api.post(`${CALLS}/${callId}/answer`).set(authHeader(pair.b.tokens));
+
+    const call = await prisma.callSession.findUniqueOrThrow({ where: { id: callId } });
+
+    // The service is exercised directly: the HTTP layer's job is verifying the
+    // signature, which is tested above, and the provider's real signature
+    // cannot be produced without its account credentials.
+    expect(await applyRoomEvent({ type: 'room-ended', roomName: call.room_name })).toEqual({
+      applied: true,
+    });
+
+    const after = await prisma.callSession.findUniqueOrThrow({ where: { id: callId } });
+    expect(after.status).toBe(CallStatus.ended);
+    expect(after.ended_by_id).toBeNull();
+  });
+
+  it('is idempotent, because providers retry', async () => {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const callId = started.body.data.call.id as string;
+    await api.post(`${CALLS}/${callId}/answer`).set(authHeader(pair.b.tokens));
+    const call = await prisma.callSession.findUniqueOrThrow({ where: { id: callId } });
+
+    await applyRoomEvent({ type: 'room-ended', roomName: call.room_name });
+    const second = await applyRoomEvent({ type: 'room-ended', roomName: call.room_name });
+
+    // Ending an ended call is a no-op, so a retry costs nothing. No ledger
+    // table needed — the row already answers the question.
+    expect(second).toEqual({ applied: false });
+  });
+
+  it('ignores events that are not the room ending', async () => {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const call = await prisma.callSession.findUniqueOrThrow({
+      where: { id: started.body.data.call.id as string },
+    });
+
+    const result = await applyRoomEvent({
+      type: 'participant-connected',
+      roomName: call.room_name,
+    });
+
+    expect(result).toEqual({ applied: false });
+  });
+
+  it('shrugs at a room it has no record of', async () => {
+    // Rooms can outlive their call row after a database reset. Answering
+    // "nothing to do" stops the provider retrying forever.
+    const result = await applyRoomEvent({ type: 'room-ended', roomName: 'kinvo-call-ghost' });
+
+    expect(result).toEqual({ applied: false });
+  });
+
+  it('records a room that ended before anyone answered as missed', async () => {
+    const pair = await matchPair(Mode.dating);
+    const started = await api
+      .post(CALLS)
+      .set(authHeader(pair.a.tokens))
+      .send({ match_id: pair.match_id });
+    const call = await prisma.callSession.findUniqueOrThrow({
+      where: { id: started.body.data.call.id as string },
+    });
+
+    await applyRoomEvent({ type: 'room-ended', roomName: call.room_name });
+
+    const after = await prisma.callSession.findUniqueOrThrow({ where: { id: call.id } });
+    expect(after.status).toBe(CallStatus.missed);
+    // Null rather than 0 — zero reads as a call that connected silently.
+    expect(after.duration_seconds).toBeNull();
   });
 });

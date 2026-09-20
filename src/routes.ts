@@ -13,7 +13,7 @@ import { mediaRouter, verificationRouter } from '@modules/media/media.routes';
 import { moderationRouter } from '@modules/moderation/moderation.routes';
 import { notificationsRouter } from '@modules/notifications/notifications.routes';
 import { plansRouter } from '@modules/plans/plans.routes';
-import { callsRouter } from '@modules/calls/calls.routes';
+import { callsRouter, callsWebhookRouter } from '@modules/calls/calls.routes';
 import { subscriptionsRouter } from '@modules/subscriptions/subscriptions.routes';
 import { blocksRouter, reportsRouter, safetyRouter } from '@modules/safety/safety.routes';
 import { venuesRouter } from '@modules/venues/venues.routes';
@@ -53,5 +53,9 @@ apiRouter.use('/plans', plansRouter);
 apiRouter.use('/venues', venuesRouter);
 apiRouter.use('/subscriptions', subscriptionsRouter);
 apiRouter.use('/calls', callsRouter);
+
+// Provider callbacks, mounted apart from everything else: they carry no bearer
+// token, and their signature is what authenticates them.
+apiRouter.use('/webhooks', callsWebhookRouter);
 apiRouter.use('/settings', settingsRouter);
 apiRouter.use('/devices', devicesRouter);

@@ -30,6 +30,7 @@ import {
   updatePlanSchema,
 } from '@modules/plans/plans.schema';
 import { safetyActionSchema, startCallSchema } from '@modules/calls/calls.schema';
+import { reviewDecisionSchema } from '@modules/media/media.schema';
 import * as settingsSchema from '@modules/settings/settings.schema';
 import * as usersSchema from '@modules/users/users.schema';
 
@@ -481,6 +482,28 @@ export const ROUTES: RouteDoc[] = [
     description: 'Step 3 of 3.',
     auth: true,
     errors: [E.VALIDATION_FAILED, E.CONFLICT, E.NOT_FOUND, E.BAD_REQUEST],
+  },
+  // --- verification review (moderator / admin) ----------------------------
+  {
+    method: 'get',
+    path: '/verification/review',
+    tag: 'Admin',
+    summary: 'The verification queue',
+    description:
+      'Submitted verifications awaiting a decision. **Oldest first**, unlike every other list in this API: a review queue is work to get through, and newest-first leaves the person who has waited longest at the bottom forever. Half-finished wizards never appear — they are not waiting on anybody. Each row carries a short-lived presigned `document_url` from the VERIFICATION bucket, minted per request and never stored; it is null for social verifications, which have no document. Requires the moderator or admin role. Query: `status` (pending, approved, rejected — defaults to pending), `limit`, `cursor`.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'post',
+    path: '/verification/{id}/review',
+    tag: 'Admin',
+    summary: 'Approve or decline a verification',
+    description:
+      'The decision lives here rather than in the admin panel, so the rules hold wherever the call comes from: a second review answers **409** rather than overwriting the first, the badge is recomputed from the records instead of being set directly, the action is written to the admin audit log with the reviewer and their IP, and the user is notified. `reason` is REQUIRED when declining — a rejection with nothing to act on is not a decision the user can respond to — and refused when approving. Requires the moderator or admin role.',
+    body: reviewDecisionSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT, E.VALIDATION_FAILED],
   },
   // --- discovery ----------------------------------------------------------
   {
@@ -1193,6 +1216,16 @@ export const ROUTES: RouteDoc[] = [
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
   },
+  {
+    method: 'post',
+    path: '/webhooks/video',
+    tag: 'Calls',
+    summary: 'Video provider status callback',
+    description:
+      '**Not for clients.** The video provider posts room lifecycle events here; its `X-Twilio-Signature` over the request URL and form parameters is the authentication, and there is no bearer token. Answers **403** to a missing or invalid signature so the provider flags the endpoint rather than retrying a forgery. This is what closes a call when the room ends without either app sending a hang-up — otherwise a call whose participants both vanish stays `active` forever. Idempotent: ending an already-ended call is a no-op, so retries cost nothing. It cannot touch entitlement, and a test asserts so.',
+    auth: false,
+    errors: [E.FORBIDDEN],
+  },
   // --- entitlements -------------------------------------------------------
   {
     method: 'get',
@@ -1561,6 +1594,10 @@ export function buildOpenApiDocument(serverUrl: string): Record<string, unknown>
       { name: 'Venues', description: 'Curated places, search, save, suggest' },
       { name: 'Subscriptions', description: 'Product catalogue and your current subscription' },
       { name: 'Calls', description: 'Video call lifecycle, room tokens, in-call safety' },
+      {
+        name: 'Admin',
+        description: 'Moderator and admin surface. Role-gated, called by the separate admin panel.',
+      },
       {
         name: 'Entitlements',
         description: 'Plan features and daily quotas',
