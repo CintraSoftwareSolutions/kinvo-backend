@@ -52,6 +52,7 @@
     "helmet": "^8.0.0",
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "^2.19.1",
     "nodemailer": "^9.0.5",
     "pino": "^9.6.0",
     "rate-limit-redis": "^6.0.1",

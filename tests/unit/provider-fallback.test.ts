@@ -40,10 +40,15 @@ const TWILIO_CREDENTIALS: NodeJS.ProcessEnv = {
   TWILIO_ACCOUNT_SID: 'AC00000000000000000000000000000000',
   TWILIO_AUTH_TOKEN: 'auth-token',
   TWILIO_VERIFY_SERVICE_SID: 'VA00000000000000000000000000000000',
-  TWILIO_API_KEY_SID: 'SK00000000000000000000000000000000',
-  TWILIO_API_KEY_SECRET: 'api-key-secret',
   GOOGLE_OAUTH_CLIENT_IDS: 'client-id.apps.googleusercontent.com',
   APPLE_CLIENT_IDS: 'com.kinvo.app',
+};
+
+/** Video moved from Twilio to LiveKit in Batch 16; SMS did not. */
+const LIVEKIT_CREDENTIALS: NodeJS.ProcessEnv = {
+  LIVEKIT_URL: 'wss://kinvo-test.livekit.cloud',
+  LIVEKIT_API_KEY: 'APIxxxxxxxxxxxx',
+  LIVEKIT_API_SECRET: 'a-livekit-api-secret-for-tests-000000000000',
 };
 
 /**
@@ -96,9 +101,9 @@ describe('the integration waiver selects stubs rather than throwing', () => {
         ...BASE_ENV,
         NODE_ENV: 'production',
         REQUIRE_THIRD_PARTY_INTEGRATIONS: 'false',
-        TWILIO_ACCOUNT_SID: '',
-        TWILIO_API_KEY_SID: '',
-        TWILIO_API_KEY_SECRET: '',
+        LIVEKIT_URL: '',
+        LIVEKIT_API_KEY: '',
+        LIVEKIT_API_SECRET: '',
       },
       () =>
         (
@@ -110,14 +115,15 @@ describe('the integration waiver selects stubs rather than throwing', () => {
     expect(provider.isConfigured).toBe(false);
   });
 
-  it('issues a stub token that could never authenticate against Twilio', () => {
-    const token = loadWith(
+  it('issues a stub token that could never authenticate against LiveKit', async () => {
+    const token = await loadWith(
       {
         ...BASE_ENV,
         NODE_ENV: 'production',
         REQUIRE_THIRD_PARTY_INTEGRATIONS: 'false',
-        TWILIO_API_KEY_SID: '',
-        TWILIO_API_KEY_SECRET: '',
+        LIVEKIT_URL: '',
+        LIVEKIT_API_KEY: '',
+        LIVEKIT_API_SECRET: '',
       },
       () =>
         (require('@/providers/video.provider') as typeof import('@/providers/video.provider'))
@@ -131,6 +137,9 @@ describe('the integration waiver selects stubs rather than throwing', () => {
     expect(token.token).toContain('not-a-jwt');
     // Still scoped to the room it was asked for, stub or not.
     expect(token.room_name).toBe('kinvo-call-abc');
+    // No server to connect to, said plainly rather than guessed at. This is
+    // what tells the app there is no video here.
+    expect(token.server_url).toBeNull();
   });
 });
 
@@ -165,8 +174,9 @@ describe('the hard stop still fires where it matters', () => {
           ...BASE_ENV,
           NODE_ENV: 'production',
           REQUIRE_THIRD_PARTY_INTEGRATIONS: 'true',
-          TWILIO_API_KEY_SID: '',
-          TWILIO_API_KEY_SECRET: '',
+          LIVEKIT_URL: '',
+          LIVEKIT_API_KEY: '',
+          LIVEKIT_API_SECRET: '',
         },
         () =>
           (
@@ -177,13 +187,39 @@ describe('the hard stop still fires where it matters', () => {
   });
 
   it('uses the real provider whenever credentials are present', () => {
-    const provider = loadWith({ ...BASE_ENV, ...TWILIO_CREDENTIALS, NODE_ENV: 'production' }, () =>
-      (
-        require('@/providers/video.provider') as typeof import('@/providers/video.provider')
-      ).getVideoProvider(),
+    const provider = loadWith(
+      { ...BASE_ENV, ...TWILIO_CREDENTIALS, ...LIVEKIT_CREDENTIALS, NODE_ENV: 'production' },
+      () =>
+        (
+          require('@/providers/video.provider') as typeof import('@/providers/video.provider')
+        ).getVideoProvider(),
     );
 
-    expect(provider.name).toBe('twilio');
+    expect(provider.name).toBe('livekit');
     expect(provider.isConfigured).toBe(true);
+  });
+
+  it('grants the one room it was asked for, and never every room', async () => {
+    const token = await loadWith(
+      { ...BASE_ENV, ...TWILIO_CREDENTIALS, ...LIVEKIT_CREDENTIALS, NODE_ENV: 'production' },
+      () =>
+        (require('@/providers/video.provider') as typeof import('@/providers/video.provider'))
+          .getVideoProvider()
+          .issueToken({ roomName: 'kinvo-call-abc', userId: 'user-1' }),
+    );
+
+    // Read back out of the signed token rather than trusted: the grant is the
+    // whole security property of this file (spec §7), and an accidental
+    // `roomJoin` without a room is a token for EVERY call on the project.
+    const claims = JSON.parse(
+      Buffer.from(token.token.split('.')[1]!, 'base64url').toString('utf8'),
+    ) as { sub: string; exp: number; video: { room?: string; roomJoin?: boolean } };
+
+    expect(claims.video.roomJoin).toBe(true);
+    expect(claims.video.room).toBe('kinvo-call-abc');
+    // The identity is our user id and carries no name or email: the other
+    // participant can read it.
+    expect(claims.sub).toBe('user-1');
+    expect(token.server_url).toBe('wss://kinvo-test.livekit.cloud');
   });
 });

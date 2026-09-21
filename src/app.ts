@@ -38,6 +38,15 @@ export function createApp(): Express {
   );
   app.use(compression());
 
+  // The video callback is verified against a sha256 of the RAW body, so this
+  // one path must see the bytes exactly as sent: a parsed and re-serialised
+  // body does not hash to the same value, and every callback would be refused.
+  //
+  // Ahead of the JSON parser rather than instead of it — body-parser marks a
+  // request it has read, so the parser below leaves this one alone and every
+  // other route is unaffected.
+  app.use(`${API_PREFIX}/webhooks/video`, express.raw({ type: '*/*', limit: env.JSON_BODY_LIMIT }));
+
   app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
 
   app.use(express.urlencoded({ extended: true, limit: env.JSON_BODY_LIMIT }));

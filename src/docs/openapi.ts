@@ -1150,7 +1150,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Calls',
     summary: 'Start a video call',
     description:
-      'Creates the call and returns a room token for YOU. The body names a **match**, never a user and never a room — a client-named room is how someone gets a token for a call they were not invited to. The other person receives a `call:incoming` socket event and a push carrying the same `call_id`; treat both as one call. Calling an already-live call on the same match returns that call rather than starting a second one, because two rooms for one conversation means two people in different rooms.',
+      'Creates the call and returns a room token for YOU: `video.token` for `video.room_name` on `video.server_url` (LiveKit). `server_url` is null where no media server is configured — the call still rings, is answered and ends, so show that video is unavailable rather than failing. The body names a **match**, never a user and never a room — a client-named room is how someone gets a token for a call they were not invited to. The other person receives a `call:incoming` socket event and a push carrying the same `call_id`; treat both as one call. Calling an already-live call on the same match returns that call rather than starting a second one, because two rooms for one conversation means two people in different rooms.',
     body: startCallSchema,
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND, E.FORBIDDEN],
@@ -1222,7 +1222,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Calls',
     summary: 'Video provider status callback',
     description:
-      '**Not for clients.** The video provider posts room lifecycle events here; its `X-Twilio-Signature` over the request URL and form parameters is the authentication, and there is no bearer token. Answers **403** to a missing or invalid signature so the provider flags the endpoint rather than retrying a forgery. This is what closes a call when the room ends without either app sending a hang-up — otherwise a call whose participants both vanish stays `active` forever. Idempotent: ending an already-ended call is a no-op, so retries cost nothing. It cannot touch entitlement, and a test asserts so.',
+      '**Not for clients.** The video provider (LiveKit) posts room lifecycle events here; the `Authorization` header carries a JWT holding a hash of the RAW body, and that is the authentication — there is no bearer token. Answers **403** to a missing or invalid signature so the provider flags the endpoint rather than retrying a forgery. This is what closes a call when the room ends without either app sending a hang-up — otherwise a call whose participants both vanish stays `active` forever. Idempotent: ending an already-ended call is a no-op, so retries cost nothing. It cannot touch entitlement, and a test asserts so.',
     auth: false,
     errors: [E.FORBIDDEN],
   },

@@ -80,14 +80,29 @@ export const envSchema = z.object({
   TWILIO_VERIFY_SERVICE_SID: z.string().optional(),
 
   /**
-   * Twilio Video (spec §7, Batch 14).
+   * LiveKit, for video calls (spec §7, Batch 14; provider changed in Batch 16).
    *
-   * An API key pair, NOT the account auth token. The auth token is the master
-   * credential for the whole account; an API key can be revoked on its own, so
-   * a leaked video credential does not also hand over SMS and billing.
+   * An API key pair scoped to one LiveKit project, so a leaked video credential
+   * does not also hand over SMS and billing the way a Twilio account token
+   * would. `LIVEKIT_URL` is the `wss://` address the apps connect to; the
+   * management API is the same host over https, derived rather than configured
+   * twice.
    */
-  TWILIO_API_KEY_SID: z.string().optional(),
-  TWILIO_API_KEY_SECRET: z.string().optional(),
+  LIVEKIT_URL: z.preprocess(
+    // An empty variable means unset, not a malformed URL. Compose files and
+    // `.env` templates carry empty keys, and refusing to boot over one would
+    // stop an environment that is deliberately running without video.
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .url()
+      .refine((value) => value.startsWith('ws://') || value.startsWith('wss://'), {
+        message: 'must be the wss:// address of the LiveKit project',
+      })
+      .optional(),
+  ),
+  LIVEKIT_API_KEY: z.string().optional(),
+  LIVEKIT_API_SECRET: z.string().optional(),
 
   // Comma-separated: iOS, Android, and web client IDs are all valid audiences.
   GOOGLE_OAUTH_CLIENT_IDS: z
@@ -267,8 +282,9 @@ const PRODUCTION_REQUIRED: { key: keyof Env; message: string }[] = [
   { key: 'TWILIO_ACCOUNT_SID', message: 'required in production for OTP delivery' },
   { key: 'TWILIO_AUTH_TOKEN', message: 'required in production for OTP delivery' },
   { key: 'TWILIO_VERIFY_SERVICE_SID', message: 'required in production for OTP delivery' },
-  { key: 'TWILIO_API_KEY_SID', message: 'required in production to issue video tokens' },
-  { key: 'TWILIO_API_KEY_SECRET', message: 'required in production to issue video tokens' },
+  { key: 'LIVEKIT_URL', message: 'required in production for video calls' },
+  { key: 'LIVEKIT_API_KEY', message: 'required in production to issue video tokens' },
+  { key: 'LIVEKIT_API_SECRET', message: 'required in production to issue video tokens' },
   { key: 'GOOGLE_OAUTH_CLIENT_IDS', message: 'required in production for Google sign-in' },
   { key: 'APPLE_CLIENT_IDS', message: 'required in production for Apple sign-in' },
 ];

@@ -14,10 +14,12 @@ const PRODUCTION_CREDENTIALS: NodeJS.ProcessEnv = {
   TWILIO_ACCOUNT_SID: 'AC00000000000000000000000000000000',
   TWILIO_AUTH_TOKEN: 'auth-token',
   TWILIO_VERIFY_SERVICE_SID: 'VA00000000000000000000000000000000',
-  // Batch 14. An API key pair rather than the account auth token, so a leaked
-  // video credential does not also hand over SMS and billing.
-  TWILIO_API_KEY_SID: 'SK00000000000000000000000000000000',
-  TWILIO_API_KEY_SECRET: 'api-key-secret',
+  // Batch 14, moved to LiveKit in Batch 16. A key pair scoped to one LiveKit
+  // project rather than an account-wide token, so a leaked video credential
+  // does not also hand over SMS and billing.
+  LIVEKIT_URL: 'wss://kinvo-test.livekit.cloud',
+  LIVEKIT_API_KEY: 'APIxxxxxxxxxxxx',
+  LIVEKIT_API_SECRET: 'a-livekit-api-secret-for-tests-000000000000',
   GOOGLE_OAUTH_CLIENT_IDS: 'client-id.apps.googleusercontent.com',
   APPLE_CLIENT_IDS: 'com.kinvo.app',
   CORS_ORIGINS: 'https://admin.kinvo.app',

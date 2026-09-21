@@ -109,7 +109,19 @@ export interface CallWithToken extends CallView {
    * Returned only to a participant, and only while the call is live. A history
    * entry carries no token — there is nothing to join.
    */
-  video: { room_name: string; token: string; expires_at: string };
+  video: {
+    room_name: string;
+    token: string;
+    /**
+     * The media server to connect to, or null when none is configured.
+     *
+     * Null is a working answer, not an error: the call itself still rings, is
+     * answered and ends, and the app says that video is unavailable here rather
+     * than failing. That is how staging runs without a LiveKit project.
+     */
+    server_url: string | null;
+    expires_at: string;
+  };
 }
 
 /**
@@ -258,7 +270,7 @@ export async function startCall(userId: string, matchId: string): Promise<CallWi
   });
 
   const otherCompact = await compactFor(other);
-  const view = withToken(created, userId, otherCompact);
+  const view = await withToken(created, userId, otherCompact);
 
   // PERSISTED FIRST. Everything below is delivery, and all of it is
   // best-effort: a push that fails must not undo a call that exists.
@@ -282,14 +294,19 @@ export async function startCall(userId: string, matchId: string): Promise<CallWi
   return view;
 }
 
-function withToken(call: CallRow, viewerId: string, otherUser: UserCompact): CallWithToken {
-  const token = issueFor(call, viewerId);
+async function withToken(
+  call: CallRow,
+  viewerId: string,
+  otherUser: UserCompact,
+): Promise<CallWithToken> {
+  const token = await issueFor(call, viewerId);
 
   return {
     ...toView(call, viewerId, otherUser),
     video: {
       room_name: token.room_name,
       token: token.token,
+      server_url: token.server_url,
       expires_at: token.expires_at.toISOString(),
     },
   };
@@ -302,8 +319,28 @@ function withToken(call: CallRow, viewerId: string, otherUser: UserCompact): Cal
  * passed, which is what makes "never issue a token for an arbitrary room" a
  * property of the code rather than a convention.
  */
-function issueFor(call: { room_name: string }, userId: string): VideoToken {
+function issueFor(call: { room_name: string }, userId: string): Promise<VideoToken> {
   return getVideoProvider().issueToken({ roomName: call.room_name, userId });
+}
+
+/**
+ * Closes the room behind a call that has ended.
+ *
+ * Deliberately swallows its error. The call is already ended in the database
+ * and both sides have been told; the room is the provider's copy of a decision
+ * that has been made. Letting a provider outage fail a hang-up would leave the
+ * caller looking at a call they cannot leave.
+ *
+ * Not awaited by the caller for the same reason — the response should not wait
+ * on a third party — but the promise is not dropped either, so a failure is
+ * always logged.
+ */
+function closeRoomFor(call: { id: string; room_name: string }): void {
+  void getVideoProvider()
+    .closeRoom(call.room_name)
+    .catch((error: unknown) => {
+      logger.warn({ err: error, call_id: call.id }, 'could not close the video room');
+    });
 }
 
 /** The callee accepts. Only the person who did not start it may answer. */
@@ -360,6 +397,9 @@ export async function declineCall(userId: string, callId: string): Promise<CallV
 
   emitCallDeclined(otherId, call.id);
 
+  // The caller has been sitting in the room since it started ringing.
+  closeRoomFor(call);
+
   return toView(declined, userId, await compactFor(other));
 }
 
@@ -396,6 +436,12 @@ export async function endCall(userId: string, callId: string): Promise<CallView>
   });
 
   emitCallEnded(otherId, call.id, ended.duration_seconds);
+
+  // Both sides have been told, but "told" is not "gone": an app that ignores
+  // the event, or was closed with the media still running, keeps the camera up
+  // until the room itself goes. This is what makes hanging up — and `end and
+  // report` above all — actually end the picture.
+  closeRoomFor(call);
 
   logger.info({ call_id: call.id, duration_seconds: ended.duration_seconds }, 'call ended');
 
@@ -702,7 +748,7 @@ export async function sweepStuckCalls(now: Date = new Date()): Promise<number> {
       // Measured from when it was answered, matching how duration is measured.
       answered_at: { lt: cutoff },
     },
-    select: { id: true, answered_at: true },
+    select: { id: true, answered_at: true, room_name: true },
   });
 
   if (stuck.length === 0) {
@@ -721,6 +767,11 @@ export async function sweepStuckCalls(now: Date = new Date()): Promise<number> {
           : null,
       },
     });
+
+    // If the provider never told us the room ended, it may still be open with
+    // a stuck client in it. Closing the row and leaving the room up would be
+    // half the job.
+    closeRoomFor(call);
   }
 
   logger.info({ count: stuck.length }, 'closed abandoned calls');

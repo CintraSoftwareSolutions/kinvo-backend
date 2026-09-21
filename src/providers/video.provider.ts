@@ -1,16 +1,19 @@
-import twilio from 'twilio';
+import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
 
 import { env, thirdPartyIntegrationsRequired } from '@config/env';
 import { logger } from '@utils/logger';
 
 /**
- * Video calling (spec §7, Batch 14).
+ * Video calling (spec §7, Batch 14; provider changed in Batch 16).
  *
- * Behind an interface because Twilio announced an end-of-life for Programmable
- * Video and then reversed it (spec §1). The product is supported again, but a
- * vendor that has once tried to shut a product down may try again, and swapping
- * to LiveKit or Agora must be a new class here rather than a change to the call
- * lifecycle.
+ * The provider is LiveKit. It was Twilio, and the reason for the change is the
+ * CLIENT rather than the service: Twilio Programmable Video is supported again
+ * after its cancelled end-of-life, but Twilio publishes no Flutter SDK, and the
+ * only community plugin was last released in 2023 and says on its own page that
+ * it should not be used in production apps. LiveKit publishes and maintains one.
+ *
+ * This file is the whole of the change, which is what the interface was for.
+ * Nothing in the call lifecycle knows which vendor is behind it.
  *
  * THE RULE THIS FILE EXISTS TO ENFORCE, quoted from the spec:
  *
@@ -26,7 +29,7 @@ import { logger } from '@utils/logger';
 /**
  * One hour.
  *
- * Twilio disconnects a participant when their token expires, so this is a floor
+ * LiveKit refuses a connection once the token has expired, so this is a floor
  * set by how long a call can plausibly run, not a number picked for tidiness.
  * Ten minutes would be safer and would also cut people off mid-conversation.
  *
@@ -42,7 +45,30 @@ export interface VideoToken {
   room_name: string;
   /** Who the token says the holder is. Always our user id. */
   identity: string;
+  /**
+   * The server the app connects to, as the provider gives it (`wss://…`).
+   *
+   * Returned with the token rather than published in `/config`, because a
+   * token is worthless without the host it was minted for, and a client that
+   * has one and not the other has nothing it can act on. Null when no provider
+   * is configured, which is how the app knows there is no media to join.
+   */
+  server_url: string | null;
   expires_at: Date;
+}
+
+/**
+ * A callback from the provider, already verified and reduced to what the call
+ * lifecycle acts on.
+ *
+ * Each vendor names its events differently and signs them differently, so the
+ * provider — not the controller — is what reads them. `room-ended` is the only
+ * type that changes anything; everything else is reported so it can be logged
+ * and ignored.
+ */
+export interface VideoRoomEvent {
+  type: 'room-ended' | 'other';
+  roomName: string;
 }
 
 export interface VideoProvider {
@@ -66,91 +92,154 @@ export interface VideoProvider {
    * construction. Re-deriving it here from an id would be a second source of
    * truth, and the failure mode is a token that silently grants a different
    * room than the one the app connects to.
+   *
+   * Async because LiveKit signs the JWT with WebCrypto.
    */
-  issueToken(options: { roomName: string; userId: string }): VideoToken;
+  issueToken(options: { roomName: string; userId: string }): Promise<VideoToken>;
 
   /**
-   * Verifies a status callback really came from the provider.
+   * Verifies a callback really came from the provider, and reads it.
    *
-   * Twilio signs the REQUEST URL plus the POST parameters sorted by name — not
-   * the raw body, the way Stripe does. So the global urlencoded parser is fine
-   * here and no raw-body carve-out is needed in `app.ts`; the parsed params ARE
-   * what the signature covers.
-   *
-   * Validation uses the ACCOUNT AUTH TOKEN, not the API key secret. Twilio signs
-   * webhooks with the account credential regardless of which key minted the
-   * tokens, and passing the key secret here fails every time in a way that looks
-   * like a misconfigured URL.
+   * Returns null when the request cannot be proved to be the provider's, which
+   * the controller turns into 403. Verification and parsing are one step on
+   * purpose: LiveKit's signature covers a sha256 of the RAW body, so the bytes
+   * that are checked must be the bytes that are read. Splitting them would
+   * allow a body to be verified and then a different parse acted upon.
    */
-  verifyWebhook(options: {
-    signature: string;
-    url: string;
-    params: Record<string, string>;
-  }): boolean;
+  readWebhook(options: { body: string; authorization?: string }): Promise<VideoRoomEvent | null>;
+
+  /**
+   * Closes a room, so a client that ignores `call:ended` still loses the media.
+   *
+   * Best-effort by contract: the caller has already ended the call in the
+   * database and told both sides. This is the belt to that braces, and it is
+   * what makes "end and report" mean the camera actually goes off rather than
+   * relying on the reported person's app to behave.
+   */
+  closeRoom(roomName: string): Promise<void>;
 }
 
 function hasCredentials(): boolean {
-  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET);
+  return Boolean(env.LIVEKIT_URL && env.LIVEKIT_API_KEY && env.LIVEKIT_API_SECRET);
 }
 
 function roomName(callId: string): string {
   return `kinvo-call-${callId}`;
 }
 
-const twilioVideoProvider: VideoProvider = {
-  name: 'twilio',
+/**
+ * The management API is HTTPS; the media URL clients connect to is WSS. They
+ * are the same host, so the scheme is swapped rather than configured twice —
+ * two variables that must agree is two variables that can disagree.
+ */
+function managementUrl(url: string): string {
+  return url.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
+}
+
+let roomService: RoomServiceClient | null = null;
+
+function rooms(): RoomServiceClient {
+  roomService ??= new RoomServiceClient(
+    managementUrl(env.LIVEKIT_URL!),
+    env.LIVEKIT_API_KEY!,
+    env.LIVEKIT_API_SECRET!,
+  );
+
+  return roomService;
+}
+
+let webhooks: WebhookReceiver | null = null;
+
+function receiver(): WebhookReceiver {
+  webhooks ??= new WebhookReceiver(env.LIVEKIT_API_KEY!, env.LIVEKIT_API_SECRET!);
+  return webhooks;
+}
+
+const liveKitVideoProvider: VideoProvider = {
+  name: 'livekit',
   isConfigured: true,
 
   roomNameFor: roomName,
 
-  issueToken({ roomName: room, userId }) {
-    const { AccessToken } = twilio.jwt;
+  async issueToken({ roomName: room, userId }) {
+    const token = new AccessToken(env.LIVEKIT_API_KEY!, env.LIVEKIT_API_SECRET!, {
+      // The identity is our user id, not a name or an email. LiveKit shows it
+      // to the other participant in the room, so it must not carry PII.
+      identity: userId,
+      ttl: VIDEO_TOKEN_TTL_SECONDS,
+    });
 
-    const token = new AccessToken(
-      env.TWILIO_ACCOUNT_SID!,
-      env.TWILIO_API_KEY_SID!,
-      env.TWILIO_API_KEY_SECRET!,
-      // The identity is our user id, not a name or an email. It is visible to
-      // the other participant in the room, so it must not carry PII.
-      { identity: userId, ttl: VIDEO_TOKEN_TTL_SECONDS },
-    );
-
-    // Scoped to ONE room. `room` is required here rather than optional by
-    // choice: a VideoGrant with no room grants every room on the account.
-    token.addGrant(new AccessToken.VideoGrant({ room }));
+    token.addGrant({
+      roomJoin: true,
+      // Scoped to ONE room. Without `room`, `roomJoin` is a grant to every room
+      // on the project.
+      room,
+      canPublish: true,
+      canSubscribe: true,
+      // Kinvo carries its own messages over its own socket, where they can be
+      // moderated and stored. A data channel here would be an unmoderated side
+      // channel between two people who may have just met.
+      canPublishData: false,
+      // No room administration: a participant must not be able to remove the
+      // other person or mute their camera from the client.
+      roomAdmin: false,
+      roomCreate: false,
+    });
 
     return {
-      token: token.toJwt(),
+      token: await token.toJwt(),
       room_name: room,
       identity: userId,
+      server_url: env.LIVEKIT_URL!,
       expires_at: new Date(Date.now() + VIDEO_TOKEN_TTL_SECONDS * 1000),
     };
   },
 
-  verifyWebhook({ signature, url, params }) {
-    // The account auth token, deliberately — see the interface comment.
-    if (!env.TWILIO_AUTH_TOKEN) {
-      logger.error('cannot verify a video webhook without TWILIO_AUTH_TOKEN');
-      return false;
+  async readWebhook({ body, authorization }) {
+    if (!authorization) {
+      return null;
     }
 
-    return twilio.validateRequest(env.TWILIO_AUTH_TOKEN, signature, url, params);
+    let event;
+
+    try {
+      event = await receiver().receive(body, authorization);
+    } catch (error) {
+      // A bad signature, a replayed request, or a body that is not an event.
+      // All three are the same answer to the caller, and none is an error this
+      // server can do anything about, so it is logged at warn rather than
+      // thrown.
+      logger.warn({ err: error }, 'video webhook failed verification');
+      return null;
+    }
+
+    return {
+      type: event.event === 'room_finished' ? 'room-ended' : 'other',
+      roomName: event.room?.name ?? '',
+    };
+  },
+
+  async closeRoom(room) {
+    await rooms().deleteRoom(room);
   },
 };
 
 /**
- * Development stand-in for machines without Twilio Video credentials.
+ * Development stand-in for machines with no LiveKit project.
  *
  * Returns a token that is deliberately NOT a JWT and could never authenticate
- * against Twilio. A plausible-looking fake would be worse: it would let a test
- * or a staging client believe it had connected when it had not.
+ * against LiveKit, and no server URL. A plausible-looking fake would be worse:
+ * it would let a test or a staging client believe it had connected when it had
+ * not.
  *
- * Selected when Twilio is unconfigured AND the integration waiver is on. A real
- * production deployment leaves the waiver at its default, so env validation
- * makes the credentials mandatory and this object cannot be reached there.
+ * Selected when LiveKit is unconfigured AND the integration waiver is on. A
+ * real production deployment leaves the waiver at its default, so env
+ * validation makes the credentials mandatory and this object cannot be reached
+ * there.
  *
  * It IS reachable on staging, deliberately — the call lifecycle is worth
- * exercising end to end without a Twilio account.
+ * exercising end to end without a LiveKit project, and the app is built to show
+ * "video is not available here" rather than to fail.
  */
 const stubVideoProvider: VideoProvider = {
   name: 'stub',
@@ -161,15 +250,16 @@ const stubVideoProvider: VideoProvider = {
   issueToken({ roomName: room, userId }) {
     logger.warn(
       { room_name: room },
-      'Twilio Video is not configured — issuing a non-functional development token',
+      'LiveKit is not configured — issuing a non-functional development token',
     );
 
-    return {
+    return Promise.resolve({
       token: `dev-token-not-a-jwt.${room}.${userId}`,
       room_name: room,
       identity: userId,
+      server_url: null,
       expires_at: new Date(Date.now() + VIDEO_TOKEN_TTL_SECONDS * 1000),
-    };
+    });
   },
 
   /**
@@ -177,15 +267,20 @@ const stubVideoProvider: VideoProvider = {
    *
    * Without credentials there is no shared secret to verify against, so nothing
    * can be proved about who sent the request — and this endpoint ENDS CALLS.
-   * Accepting unverified callbacks would let anyone hang up anyone's call by
-   * guessing a room name.
+   * Accepting unverified callbacks would let anyone hang up anyone by guessing
+   * a room name.
    *
-   * Nothing is lost by refusing: with no Twilio account there are no Twilio
+   * Nothing is lost by refusing: with no LiveKit project there are no LiveKit
    * callbacks, and `sweepStuckCalls` closes abandoned calls either way.
    */
-  verifyWebhook() {
-    logger.warn('video webhook refused — Twilio is not configured, so nothing can be verified');
-    return false;
+  readWebhook() {
+    logger.warn('video webhook refused — LiveKit is not configured, so nothing can be verified');
+    return Promise.resolve(null);
+  },
+
+  closeRoom() {
+    // Nothing was ever opened.
+    return Promise.resolve();
   },
 };
 
@@ -197,7 +292,7 @@ export function getVideoProvider(): VideoProvider {
   }
 
   if (hasCredentials()) {
-    provider = twilioVideoProvider;
+    provider = liveKitVideoProvider;
     return provider;
   }
 
@@ -205,7 +300,7 @@ export function getVideoProvider(): VideoProvider {
     // Unreachable while env validation requires these in production. Kept as a
     // hard stop: a production build handing out fake video tokens would look
     // like a broken client rather than a missing credential.
-    throw new Error('Twilio Video credentials are required in production');
+    throw new Error('LiveKit credentials are required in production');
   }
 
   // Tested against the WAIVER, not NODE_ENV. Staging is NODE_ENV=production
@@ -220,4 +315,6 @@ export function getVideoProvider(): VideoProvider {
 /** Tests swap in a stub; without a reset it leaks into the next suite. */
 export function setVideoProvider(next: VideoProvider | null): void {
   provider = next;
+  roomService = null;
+  webhooks = null;
 }

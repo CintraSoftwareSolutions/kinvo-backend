@@ -61,6 +61,10 @@ describe('POST /calls', () => {
     expect(call.video.room_name).toBe(row.room_name);
     expect(call.video.token).toBeTruthy();
 
+    // Present even without a LiveKit project, where it is null: the app needs
+    // an answer either way, and a missing key would read as an older server.
+    expect(call.video).toHaveProperty('server_url');
+
     // Short-lived, per the spec. Asserted as a bound rather than an exact value
     // so the constant can move without rewriting the test.
     const ttlMs = new Date(call.video.expires_at).getTime() - Date.now();
@@ -605,7 +609,7 @@ describe('the provider status callback', () => {
 
     const response = await api
       .post(WEBHOOK)
-      .send({ StatusCallbackEvent: 'room-ended', RoomName: call.room_name });
+      .send({ event: 'room_finished', room: { name: call.room_name } });
 
     // Without a signature nothing can be proved about who sent this, and this
     // endpoint ENDS CALLS. Accepting it would let anyone hang up anyone.
@@ -621,13 +625,35 @@ describe('the provider status callback', () => {
 
     const response = await api
       .post(WEBHOOK)
-      .set('x-twilio-signature', 'not-a-real-signature')
-      .send({ StatusCallbackEvent: 'room-ended', RoomName: call.room_name });
+      // LiveKit's signature is a JWT in this header, carrying a hash of the
+      // body. Anything else is a forgery, including a well-formed JWT signed
+      // with the wrong secret.
+      .set('authorization', 'eyJhbGciOiJIUzI1NiJ9.not-a-real-token.signature')
+      .send({ event: 'room_finished', room: { name: call.room_name } });
 
     expect(response.status).toBe(403);
 
     const after = await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } });
     expect(after.status).toBe(CallStatus.active);
+  });
+
+  it('refuses a body whose hash does not match the signature', async () => {
+    const { call_id } = await answeredCall();
+    const call = await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } });
+
+    // The point of verifying the RAW body: a signature that is genuine for one
+    // payload must not admit a different one. Here the header is not genuine
+    // either, but the assertion that matters is that the call survives — no
+    // request without a matching hash may end it.
+    const response = await api
+      .post(WEBHOOK)
+      .set('authorization', 'Bearer replayed-from-another-request')
+      .send({ event: 'room_finished', room: { name: call.room_name } });
+
+    expect(response.status).toBe(403);
+    expect((await prisma.callSession.findUniqueOrThrow({ where: { id: call_id } })).status).toBe(
+      CallStatus.active,
+    );
   });
 });
 

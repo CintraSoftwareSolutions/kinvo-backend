@@ -43,7 +43,7 @@ The eight modes: `dating`, `study_buddy`, `networking`, `trading`, `foodie`, `cu
 | Media      | AWS S3, presigned URLs                                                                                           |
 | Push       | Firebase Cloud Messaging                                                                                         |
 | SMS / OTP  | Twilio Verify                                                                                                    |
-| Video      | Twilio Video token issuance, behind a `VideoProvider` interface                                                  |
+| Video      | LiveKit token issuance, behind a `VideoProvider` interface (was Twilio; see DECISIONS.md)                        |
 | Payments   | **None in this codebase.** No processor, no checkout, no webhook — see the Subscriptions section below           |
 | Jobs       | BullMQ + Redis                                                                                                   |
 | Logging    | Pino                                                                                                             |
@@ -163,11 +163,11 @@ Never widen `req.user` from a token claim. `authenticate` loads the user on ever
 The spec is explicit: _"never issue a token that grants access to arbitrary rooms."_
 A leak here is not a data leak — it is a stranger appearing on someone's camera.
 
-- The room name is **derived from the call id** and stored on the row. `issueToken` takes that stored name, not an id it re-derives, so the room a client is told to join and the room its token admits it to are the same string by construction. A `VideoGrant` with no room grants every room on the account, so `room` is never optional.
+- The room name is **derived from the call id** and stored on the row. `issueToken` takes that stored name, not an id it re-derives, so the room a client is told to join and the room its token admits it to are the same string by construction. A `roomJoin` grant with no room grants every room on the project, so `room` is never optional.
 - Starting a call names a **match**. Never a user, never a room — a client-supplied room name is the hole the spec is warning about, and the schema is `.strict()` so sending one is a 400.
 - The permission check is `isPairReachable`, **the same function messaging uses**. It lives in `matches.service.ts` precisely so calling cannot drift into being the laxer of the two. Do not copy it.
 - It is re-checked on **every token issue**, not just at the start. Blocking someone who is on your screen has to stop their next reconnect rather than take effect after they hang up.
-- Token TTL is one hour, not ten minutes: Twilio disconnects a participant when their token expires. `GET /calls/{id}/token` re-issues, and that endpoint is what makes a short TTL workable instead of merely strict.
+- Token TTL is one hour, not ten minutes: LiveKit refuses the connection once a token expires. `GET /calls/{id}/token` re-issues, and that endpoint is what makes a short TTL workable instead of merely strict.
 - Every refusal answers the **same 404** — blocked, unmatched, expired, account gone. Telling them apart confirms a block by elimination.
 - Ringing timeout is decided at **read time**, like match expiry. A row still marked `ringing` reads as `missed`, so a late sweep never leaves a call ringing in history.
 - Duration is measured from `answered_at`, not `started_at`. A call that rang for forty seconds and was picked up for ten lasted ten. Unanswered calls carry `null`, not `0` — zero reads as a call that connected silently.
@@ -185,10 +185,14 @@ A leak here is not a data leak — it is a stranger appearing on someone's camer
 - Review queues are ordered **oldest first**, unlike every other list. A queue is work to get through; newest-first strands whoever has waited longest.
 
 **Provider webhooks.** `/webhooks/video` is the only one, and its SIGNATURE is
-its authentication — there is no bearer token. Twilio signs the request URL plus
-the sorted form parameters, NOT the raw body the way Stripe did, so the global
-`express.urlencoded` parser is correct and no raw-body carve-out is needed.
-Validation uses the account AUTH TOKEN, not the API key secret.
+its authentication — there is no bearer token. LiveKit sends an `Authorization`
+header holding a JWT that carries a sha256 of the body, so this one path is
+given `express.raw` in `app.ts`: a body that has been parsed and re-serialised
+no longer hashes to the claimed value, and every real callback would be refused.
+The controller fails loudly if it is handed anything but a Buffer, because the
+alternative is an outage that reads as a signature problem. Verification and
+parsing are ONE step, inside the provider — the bytes that are checked must be
+the bytes that are acted on.
 
 - Without credentials the provider stub **refuses every callback**, and that is right: this endpoint ends calls, so accepting unverified ones would let anyone hang up anyone by guessing a room name.
 - It exists to close the gap where a call is answered and both clients then vanish — nothing else ever sends the hang-up, and the row would read `active` for ever. `sweepStuckCalls` is the backstop when the callback never arrives.

@@ -78,11 +78,16 @@ export async function recordSafetyAction(req: Request, res: Response): Promise<v
 }
 
 /**
- * The video provider's status callback (Batch 14 follow-up).
+ * The video provider's status callback (Batch 14 follow-up, LiveKit in 16).
  *
  * NOT authenticated by a bearer token — the provider has none. Its SIGNATURE is
- * the authentication, verified over the request URL and the POST parameters
- * before a single field is read.
+ * the authentication: LiveKit sends an `Authorization` header holding a JWT
+ * that carries a sha256 of the body, so the body is verified before a single
+ * field of it is read.
+ *
+ * The raw bytes matter. `app.ts` gives this one path `express.raw`, because a
+ * body that has been parsed and re-serialised no longer hashes to the value the
+ * JWT claims.
  *
  * Response codes carry meaning to the provider:
  *
@@ -93,28 +98,31 @@ export async function recordSafetyAction(req: Request, res: Response): Promise<v
  *         provider retry an event nothing will ever act on.
  */
 export async function handleVideoWebhook(req: Request, res: Response): Promise<void> {
-  const signature = req.get('x-twilio-signature');
+  // `express.raw` leaves a Buffer. Anything else means the carve-out in app.ts
+  // has been moved or removed, and verifying a re-serialised body would refuse
+  // every real callback — so this fails loudly rather than silently.
+  const raw = req.body as unknown;
+  const body = Buffer.isBuffer(raw) ? raw.toString('utf8') : null;
 
-  if (!signature) {
-    throw new ApiError(ERROR_CODES.FORBIDDEN, 'Missing signature.');
+  if (body === null) {
+    logger.error('video webhook body was parsed before it could be verified');
+    throw new ApiError(ERROR_CODES.FORBIDDEN, 'Invalid signature.');
   }
 
-  // The signature covers the URL the provider was configured with, so it has to
-  // be reconstructed exactly — including the proxy's protocol and host, not the
-  // container's. `trust proxy` is what makes req.protocol and req.get('host')
-  // report what the caller actually addressed.
-  const url = `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`;
-  const params = req.body as Record<string, string>;
+  const event = await getVideoProvider().readWebhook({
+    body,
+    // LiveKit's own documentation has used both spellings over time. Reading
+    // either costs nothing and saves an outage that would look like a signature
+    // failure.
+    authorization: req.get('authorization') ?? req.get('authorize'),
+  });
 
-  if (!getVideoProvider().verifyWebhook({ signature, url, params })) {
+  if (!event) {
     logger.warn({ path: req.path }, 'video webhook signature rejected');
     throw new ApiError(ERROR_CODES.FORBIDDEN, 'Invalid signature.');
   }
 
-  const result = await callsService.applyRoomEvent({
-    type: params.StatusCallbackEvent ?? '',
-    roomName: params.RoomName ?? '',
-  });
+  const result = await callsService.applyRoomEvent(event);
 
   sendSuccess(res, { received: true, applied: result.applied });
 }

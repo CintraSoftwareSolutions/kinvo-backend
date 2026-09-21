@@ -1335,6 +1335,91 @@ the subscriptions assertion that the webhook namespace grants nothing was
 narrowed from "no webhooks at all" to the specific payment paths, plus a new
 test that the one webhook which does exist cannot move a tier.
 
+### 2026-09-21 — Video moves from Twilio to LiveKit
+
+Found while connecting the app's calling screens, and decided by the product
+owner.
+
+**The service was never the problem; the client SDK is.** Twilio Programmable
+Video is alive — the December 2026 end-of-life was reversed in October 2024 and
+new customers can still sign up. But Twilio publishes no Flutter SDK. The only
+one is a community plugin, last released in 2023, which says on its own page
+that it should not be used in production. Building the app's call screen on a
+three-year-old plugin means a package that may not compile against current
+Flutter and Android tooling, no iOS privacy manifest, and nobody to fix either.
+
+Three options were put to the owner: LiveKit and Agora, both of which publish
+and maintain their own Flutter SDKs, or keeping Twilio and running the call
+inside a WebView with `twilio-video.js`. The WebView costs no backend change
+and costs the call instead — audio routing, backgrounding and
+picture-in-picture all become unreliable. Agora cannot be self-hosted. LiveKit
+was chosen: a maintained Flutter SDK, a free tier, and the option of running it
+on our own infrastructure later.
+
+**This file is the whole change, which is what the interface was for.** The
+comment at the top of `video.provider.ts` said a vendor swap must be a new
+class there rather than a change to the call lifecycle. It held: nothing in
+`calls.service.ts` learned which vendor is behind it. The interface itself
+moved in three places.
+
+- `issueToken` is **async**. LiveKit signs with WebCrypto. `withToken` and its
+  three callers grew an `await` and nothing else.
+- `verifyWebhook` became **`readWebhook`**, which verifies AND parses. Each
+  vendor names its events differently and signs them differently; splitting the
+  two would let one body be verified and a different parse be acted upon.
+- `closeRoom` is new. See below.
+
+**The raw-body carve-out that yesterday's entry said was unnecessary is now
+necessary.** Twilio signed the request URL plus sorted form parameters, so the
+global parser was fine. LiveKit signs a sha256 of the raw body, so
+`/api/v1/webhooks/video` gets `express.raw` ahead of `express.json`, and the
+controller refuses anything that is not a Buffer. That last check matters: if
+the carve-out is ever moved, every genuine callback starts failing, and without
+the check it presents as a signature problem rather than a parser ordering
+problem.
+
+**`closeRoom` exists because telling an app to stop is not the same as
+stopping.** Ending a call writes the row and emits `call:ended`, and until now
+that was the whole of it — an app that ignored the event, or was killed with
+the media still running, kept the camera up. That is tolerable for an ordinary
+hang-up and not tolerable for `end_and_report`, where the person reaching for
+the control wants to stop being seen. The room is now deleted after a hang-up,
+a decline, and the abandoned-call sweep. It is best-effort by contract and
+never awaited by the request: a provider outage must not fail a hang-up and
+leave someone in a call they cannot leave. The promise is not dropped either,
+so a failure is always logged.
+
+**`video.server_url` is returned with the token**, and is null where no media
+server is configured. A token is worthless without the host it was minted for,
+and a client holding one but not the other has nothing to act on. Null is a
+working answer rather than an error — staging runs with no LiveKit project, the
+call still rings, is answered and ends, and the app says video is unavailable
+instead of failing. The stub's token stays deliberately not-a-JWT for the same
+reason it always was.
+
+The token grant is `roomJoin` for one room, `canPublish`, `canSubscribe`, and
+**`canPublishData: false`** — Kinvo's messages go over Kinvo's socket where they
+can be moderated and stored, and a data channel here would be an unmoderated
+side channel between two people who may have just met. No `roomAdmin`: a
+participant must not be able to mute or remove the other from the client.
+`identity` is the user id, which the other participant can read, so it carries
+no name or email.
+
+Twilio stays in the codebase for SMS and OTP. `TWILIO_API_KEY_SID` and
+`TWILIO_API_KEY_SECRET` are gone; `LIVEKIT_URL`, `LIVEKIT_API_KEY` and
+`LIVEKIT_API_SECRET` are required in production in their place. An empty
+`LIVEKIT_URL` reads as unset rather than as a malformed URL, because compose
+files and env templates carry empty keys and refusing to boot over one would
+stop an environment that is deliberately running without video.
+
+**Tests:** the provider-selection suite now asserts the grant by decoding the
+signed token — `roomJoin` true, `room` exactly the room asked for, `sub` the
+user id — because an accidental `roomJoin` without a room is a token for every
+call on the project, and that is the one mistake this file exists to prevent.
+The webhook tests refuse an unsigned callback, a forged header and a body whose
+hash cannot match, and assert in each case that the call is still active
+afterwards.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started
