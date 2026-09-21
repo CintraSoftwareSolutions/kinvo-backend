@@ -2,7 +2,7 @@ import { API_PREFIX } from '@config/constants';
 import { Mode, NotificationCategory, prisma } from '@/db/prisma';
 import { setPushProvider } from '@modules/notifications/providers';
 import { notify } from '@modules/notifications/notifications.service';
-import type { PushMessage, PushProvider, PushResult } from '@/providers/push.provider';
+import type { PushMessage, PushProvider, PushResult, PushTarget } from '@/providers/push.provider';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader, createAuthenticatedUser } from '../../helpers/auth';
 import { LONDON } from '../../helpers/factories';
@@ -25,12 +25,17 @@ const NOTIFICATIONS = `${API_PREFIX}/notifications`;
 class RecordingPushProvider implements PushProvider {
   readonly name = 'recording';
   readonly isConfigured = true;
-  readonly sends: { tokens: string[]; message: PushMessage }[] = [];
+  readonly sends: { targets: PushTarget[]; message: PushMessage }[] = [];
   invalidTokens: string[] = [];
 
-  send(tokens: string[], message: PushMessage): Promise<PushResult> {
-    this.sends.push({ tokens, message });
-    return Promise.resolve({ sent: tokens.length, invalidTokens: this.invalidTokens });
+  send(targets: PushTarget[], message: PushMessage): Promise<PushResult> {
+    this.sends.push({ targets, message });
+    return Promise.resolve({ sent: targets.length, invalidTokens: this.invalidTokens });
+  }
+
+  /** What the old assertions read, before the platform travelled with it. */
+  get tokensSent(): string[][] {
+    return this.sends.map((send) => send.targets.map((target) => target.token));
   }
 }
 
@@ -151,7 +156,7 @@ describe('push delivery', () => {
     await notify({ userId: user_id, category: 'system', title: 'Hello', body: 'Both devices.' });
 
     expect(push.sends).toHaveLength(1);
-    expect(push.sends[0]?.tokens.sort()).toEqual(['token-phone', 'token-tablet']);
+    expect(push.tokensSent[0]?.sort()).toEqual(['token-phone', 'token-tablet']);
   });
 
   it('carries a deep link and the badge count', async () => {
@@ -174,6 +179,36 @@ describe('push delivery', () => {
     expect(message?.data.count).toBe('2');
     expect(message?.data.category).toBe('new_match');
     expect(message?.badge).toBe(1);
+  });
+
+  it('marks a call as one the app draws, and nothing else', async () => {
+    const { user_id, tokens } = await createAuthenticatedUser();
+    await registerDevice(user_id, tokens, 'token-a');
+
+    await notify({
+      userId: user_id,
+      category: 'call',
+      title: 'Incoming call',
+      body: 'Someone you matched with is calling.',
+      data: { call_id: 'c1' },
+    });
+
+    // An Android phone that receives a message with a notification block puts
+    // it in the tray and never wakes the app, so the app cannot ring or show a
+    // call screen. This flag is what turns it into a data-only wake-up.
+    expect(push.sends[0]?.message.drawnByApp).toBe(true);
+    // The platform travels with the token, because Apple still wants the
+    // ordinary payload.
+    expect(push.sends[0]?.targets[0]?.platform).toBeDefined();
+
+    await notify({
+      userId: user_id,
+      category: 'new_message',
+      title: 'New message',
+      body: 'Say hello.',
+    });
+
+    expect(push.sends[1]?.message.drawnByApp).toBe(false);
   });
 
   it('does not push when the category is muted', async () => {

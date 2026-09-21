@@ -1,3 +1,4 @@
+import type { DevicePlatform } from '@/db/prisma';
 import { logger } from '@utils/logger';
 
 /**
@@ -19,6 +20,31 @@ export interface PushMessage {
   data: Record<string, string>;
   /** Drives the app icon badge; the count comes from the feed, not from pushes. */
   badge?: number;
+  /**
+   * True when the APP draws this one, not the system tray — an incoming call,
+   * which has to ring and cover the lock screen with Answer and Decline.
+   *
+   * Android delivers a message carrying a `notification` block straight to the
+   * tray while the app is in the background, and the app never sees it. A
+   * data-only message at high priority is woken up and handed to the app
+   * instead, which is the only way it can show a call screen. Apple keeps the
+   * ordinary payload: a real incoming-call screen there needs CallKit and VoIP
+   * push, which need a paid developer account and a final app id.
+   */
+  drawnByApp?: boolean;
+}
+
+/**
+ * One phone to reach.
+ *
+ * The platform travels with the token because the two need different message
+ * shapes for a call: Android must be woken up with a data-only message so the
+ * app can ring, while Apple keeps the ordinary payload. Everything else is
+ * identical on both.
+ */
+export interface PushTarget {
+  token: string;
+  platform: DevicePlatform;
 }
 
 export interface PushResult {
@@ -34,7 +60,7 @@ export interface PushResult {
 export interface PushProvider {
   readonly name: string;
   readonly isConfigured: boolean;
-  send(tokens: string[], message: PushMessage): Promise<PushResult>;
+  send(targets: PushTarget[], message: PushMessage): Promise<PushResult>;
 }
 
 /**
@@ -49,9 +75,9 @@ export class NoopPushProvider implements PushProvider {
   readonly name = 'noop';
   readonly isConfigured = false;
 
-  send(tokens: string[]): Promise<PushResult> {
-    if (tokens.length > 0) {
-      logger.debug({ count: tokens.length }, 'push skipped — no provider configured');
+  send(targets: PushTarget[]): Promise<PushResult> {
+    if (targets.length > 0) {
+      logger.debug({ count: targets.length }, 'push skipped — no provider configured');
     }
 
     return Promise.resolve({ sent: 0, invalidTokens: [] });

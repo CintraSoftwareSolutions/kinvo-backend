@@ -1,4 +1,5 @@
 import { MatchStatus, type NotificationCategory, type Prisma, prisma } from '@/db/prisma';
+import type { PushTarget } from '@/providers/push.provider';
 import { emitToUser } from '@/realtime/emit';
 import { SERVER_EVENTS } from '@/realtime/events';
 import { ApiError } from '@utils/api-error';
@@ -83,16 +84,20 @@ async function preferencesFor(
   };
 }
 
-/** Live tokens for a user's connected devices. */
-async function pushTokensFor(userId: string): Promise<string[]> {
+/**
+ * Live tokens for a user's connected devices, each with the platform it runs
+ * on — a call has to be shaped differently for Android, which must be woken up
+ * to ring, than for Apple.
+ */
+async function pushTokensFor(userId: string): Promise<PushTarget[]> {
   const devices = await prisma.device.findMany({
     where: { user_id: userId, revoked_at: null, fcm_token: { not: null } },
-    select: { fcm_token: true },
+    select: { fcm_token: true, platform: true },
   });
 
-  return devices
-    .map((device) => device.fcm_token)
-    .filter((token): token is string => token !== null);
+  return devices.flatMap((device) =>
+    device.fcm_token === null ? [] : [{ token: device.fcm_token, platform: device.platform }],
+  );
 }
 
 function stringifyData(data: Record<string, unknown>): Record<string, string> {
@@ -172,6 +177,9 @@ async function deliverPush(
     body: view.body,
     data: { ...data, notification_id: view.id, category: view.category },
     badge,
+    // A call is the one notification the app draws itself: it has to ring and
+    // cover the lock screen, which a tray banner cannot do.
+    drawnByApp: view.category === 'call',
   });
 
   // A token FCM calls permanently dead is cleared, or every future send retries

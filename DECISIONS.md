@@ -1455,6 +1455,32 @@ statements again.
 unknown kind is a 400, and the default is asserted where a call is started
 without one.
 
+### 2026-09-21 — A call push Android has to wake the app for
+
+The app is adding a ringing call screen for a phone whose app is closed. That
+screen is drawn by Android, and Android only hands a push to the app when the
+message carries NO notification block: with one, it goes straight to the tray
+and the app is never woken. A tray banner cannot ring, cannot cover the lock
+screen, and has no Answer button.
+
+So a call now goes out as a data-only message at high priority — to ANDROID.
+Apple keeps the ordinary payload: a real incoming-call screen there needs
+CallKit and VoIP push, which need a paid developer account and a final app id,
+and until then a normal banner is the honest thing to send.
+
+Two platforms, two shapes, so the platform had to travel with the token:
+`send` now takes `PushTarget[]` rather than a list of strings. It is already
+on the device row — nothing new is stored, it was simply being dropped on the
+way to the provider.
+
+`drawnByApp` is set from the category rather than passed in by each caller.
+One place decides, and it is the same place that already decides everything
+else about a notification.
+
+The title and body still travel in a data-only message, as data, so the app
+can draw them. Nothing else about push changed: every other notification goes
+out exactly as before, which a test asserts alongside the new one.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

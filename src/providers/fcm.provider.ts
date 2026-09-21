@@ -2,7 +2,7 @@ import { type App, cert, deleteApp, getApps, initializeApp } from 'firebase-admi
 import { getMessaging } from 'firebase-admin/messaging';
 
 import { logger } from '@utils/logger';
-import type { PushMessage, PushProvider, PushResult } from './push.provider';
+import type { PushMessage, PushProvider, PushResult, PushTarget } from './push.provider';
 
 /**
  * Firebase Cloud Messaging (spec §3, Batch 11).
@@ -90,7 +90,49 @@ export class FcmPushProvider implements PushProvider {
     logger.info({ project_id: account.project_id }, 'fcm configured');
   }
 
-  async send(tokens: string[], message: PushMessage): Promise<PushResult> {
+  async send(targets: PushTarget[], message: PushMessage): Promise<PushResult> {
+    if (!this.app || targets.length === 0) {
+      return { sent: 0, invalidTokens: [] };
+    }
+
+    // A call is the one message the app draws itself, and the two platforms
+    // need different shapes for it, so they are sent separately. Everything
+    // else goes out in one group, exactly as before.
+    if (!message.drawnByApp) {
+      return this.deliver(
+        targets.map((target) => target.token),
+        message,
+        { wakeTheApp: false },
+      );
+    }
+
+    const android = targets.filter((target) => target.platform === 'android');
+    const rest = targets.filter((target) => target.platform !== 'android');
+
+    const [woken, ordinary] = await Promise.all([
+      this.deliver(
+        android.map((target) => target.token),
+        message,
+        { wakeTheApp: true },
+      ),
+      this.deliver(
+        rest.map((target) => target.token),
+        message,
+        { wakeTheApp: false },
+      ),
+    ]);
+
+    return {
+      sent: woken.sent + ordinary.sent,
+      invalidTokens: [...woken.invalidTokens, ...ordinary.invalidTokens],
+    };
+  }
+
+  private async deliver(
+    tokens: string[],
+    message: PushMessage,
+    { wakeTheApp }: { wakeTheApp: boolean },
+  ): Promise<PushResult> {
     if (!this.app || tokens.length === 0) {
       return { sent: 0, invalidTokens: [] };
     }
@@ -105,8 +147,27 @@ export class FcmPushProvider implements PushProvider {
       try {
         const response = await messaging.sendEachForMulticast({
           tokens: batch,
-          notification: { title: message.title, body: message.body },
-          data: message.data,
+          // A message the app draws itself carries no notification block for
+          // Android: with one, Android puts it in the tray and never wakes the
+          // app, which cannot then ring or show a call screen. The title and
+          // body still travel, as data, so the app can render them.
+          ...(wakeTheApp
+            ? {
+                data: {
+                  ...message.data,
+                  title: message.title,
+                  body: message.body,
+                },
+                android: { priority: 'high' as const },
+              }
+            : {
+                notification: { title: message.title, body: message.body },
+                data: message.data,
+                android: {
+                  priority: 'high' as const,
+                  notification: { sound: 'default' },
+                },
+              }),
           apns: {
             payload: {
               aps: {
@@ -114,10 +175,6 @@ export class FcmPushProvider implements PushProvider {
                 sound: 'default',
               },
             },
-          },
-          android: {
-            priority: 'high',
-            notification: { sound: 'default' },
           },
         });
 
