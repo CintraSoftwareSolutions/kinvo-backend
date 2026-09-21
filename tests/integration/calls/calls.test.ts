@@ -53,6 +53,9 @@ describe('POST /calls', () => {
     expect(call.is_initiator).toBe(true);
     expect(call.match_id).toBe(match_id);
     expect(call.mode).toBe('dating');
+    // Video unless asked otherwise, so a client that predates voice calls
+    // behaves exactly as it did.
+    expect(call.kind).toBe('video');
 
     // The room the client is told to join must be the room stored on the call.
     // Deriving those from two different values is how a token silently admits
@@ -70,6 +73,40 @@ describe('POST /calls', () => {
     const ttlMs = new Date(call.video.expires_at).getTime() - Date.now();
     expect(ttlMs).toBeGreaterThan(0);
     expect(ttlMs).toBeLessThanOrEqual(VIDEO_TOKEN_TTL_SECONDS * 1000 + 5_000);
+  });
+
+  it('starts a voice call, and stores that it is one', async () => {
+    const { a, b, match_id } = await matchPair(Mode.dating);
+
+    const response = await api
+      .post(CALLS)
+      .set(authHeader(a.tokens))
+      .send({ match_id, kind: 'audio' });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.call.kind).toBe('audio');
+
+    // Stored rather than kept on the caller's phone: the person being rung
+    // decides whether to open their camera, and the row is what tells them.
+    const row = await prisma.callSession.findUniqueOrThrow({
+      where: { id: response.body.data.call.id as string },
+    });
+    expect(row.kind).toBe('audio');
+
+    // And the callee can see which kind it is before answering.
+    const answered = await api.post(`${CALLS}/${row.id}/answer`).set(authHeader(b.tokens));
+    expect(answered.body.data.call.kind).toBe('audio');
+  });
+
+  it('refuses a kind it does not know', async () => {
+    const { a, match_id } = await matchPair(Mode.dating);
+
+    const response = await api
+      .post(CALLS)
+      .set(authHeader(a.tokens))
+      .send({ match_id, kind: 'hologram' });
+
+    expect(response.status).toBe(400);
   });
 
   it('rejects a body naming anything other than a match', async () => {

@@ -14,7 +14,20 @@ export const callIdParamSchema = z.object({ id: z.string().uuid() }).strict();
  * ask for a token to a room they were never invited to. The room is derived
  * server-side from the call id.
  */
-export const startCallSchema = z.object({ match_id: z.string().uuid() }).strict();
+export const startCallSchema = z
+  .object({
+    match_id: z.string().uuid(),
+    /**
+     * Video unless the caller says otherwise, so a client that predates voice
+     * calls keeps behaving exactly as it did.
+     *
+     * The kind is stored rather than kept on the caller's phone because the
+     * person being rung needs it before they answer: answering a voice call
+     * must not open their camera.
+     */
+    kind: z.enum(['video', 'audio']).optional().default('video'),
+  })
+  .strict();
 
 export const listCallsQuerySchema = z
   .object({

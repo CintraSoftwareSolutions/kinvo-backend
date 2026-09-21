@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  CallKind,
   CallSafetyActionType,
   CallStatus,
   type Mode,
@@ -92,6 +93,8 @@ export interface CallView {
   match_id: string;
   mode: Mode;
   status: CallStatus;
+  /** What the call STARTED as. Either side may turn video on mid-call. */
+  kind: CallKind;
   /** True for the person who started it — the app renders a different screen. */
   is_initiator: boolean;
   other_user: UserCompact;
@@ -147,6 +150,7 @@ function toView(call: CallRow, viewerId: string, otherUser: UserCompact): CallVi
     id: call.id,
     match_id: call.match_id,
     mode: call.match.mode,
+    kind: call.kind,
     // A stale ringing row reads as `missed` even before the sweep rewrites it,
     // so the history list never shows a call as still ringing.
     status: isStale(call) ? CallStatus.missed : call.status,
@@ -196,7 +200,11 @@ async function loadParticipating(viewerId: string, callId: string): Promise<Call
  * active, neither side blocked or gone. `isPairReachable` is the shared rule
  * that messaging uses, so calling cannot drift into being the laxer of the two.
  */
-export async function startCall(userId: string, matchId: string): Promise<CallWithToken> {
+export async function startCall(
+  userId: string,
+  matchId: string,
+  kind: CallKind = CallKind.video,
+): Promise<CallWithToken> {
   const match = await prisma.match.findFirst({
     where: { id: matchId, OR: [{ user_a_id: userId }, { user_b_id: userId }] },
     select: {
@@ -264,6 +272,9 @@ export async function startCall(userId: string, matchId: string): Promise<CallWi
       initiator_id: userId,
       room_name: getVideoProvider().roomNameFor(callId),
       status: CallStatus.ringing,
+      // Stored, not held on the caller's phone: the ringing phone decides
+      // whether to open its camera, and this is all it has to go on.
+      kind,
       started_at: new Date(),
     },
     include: CALL_INCLUDE,
@@ -278,18 +289,22 @@ export async function startCall(userId: string, matchId: string): Promise<CallWi
     call_id: created.id,
     match_id: matchId,
     mode: match.mode,
+    kind: created.kind,
     from: await compactFor(match.user_a_id === userId ? match.user_a : match.user_b),
   });
 
   await notify({
     userId: other.id,
     category: 'call',
-    title: 'Incoming call',
+    title: created.kind === CallKind.audio ? 'Incoming voice call' : 'Incoming call',
     body: 'Someone you matched with is calling.',
-    data: { call_id: created.id, match_id: matchId, mode: match.mode },
+    data: { call_id: created.id, match_id: matchId, mode: match.mode, kind: created.kind },
   });
 
-  logger.info({ call_id: created.id, match_id: matchId, mode: match.mode }, 'call started');
+  logger.info(
+    { call_id: created.id, match_id: matchId, mode: match.mode, kind: created.kind },
+    'call started',
+  );
 
   return view;
 }

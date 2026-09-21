@@ -285,6 +285,23 @@ enum CallStatus {
   @@map("call_status")
 }
 
+/// Whether the caller asked for a camera or only a microphone.
+///
+/// Both run through the same room and the same token; the difference is what
+/// each app publishes when it joins, and it has to be stored rather than kept
+/// on the caller's phone — the person being rung needs to know which kind of
+/// call is arriving before they answer, or a voice call would open their
+/// camera.
+///
+/// Either side may turn video on mid-call. The stored kind is what the call
+/// STARTED as, which is also what history should show.
+enum CallKind {
+  video
+  audio
+
+  @@map("call_kind")
+}
+
 enum CallSafetyActionType {
   flag
   end_and_report
@@ -1608,6 +1625,9 @@ model CallSession {
   /// grants access to arbitrary rooms.
   room_name String     @unique @db.VarChar(128)
   status    CallStatus @default(ringing)
+  /// Defaults to video so a client that does not send it behaves exactly as it
+  /// did before this column existed.
+  kind      CallKind   @default(video)
 
   started_at       DateTime?
   answered_at      DateTime?

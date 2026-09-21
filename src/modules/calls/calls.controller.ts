@@ -15,7 +15,7 @@ export async function startCall(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const body = req.body as StartCallBody;
 
-  const call = await callsService.startCall(user.id, body.match_id);
+  const call = await callsService.startCall(user.id, body.match_id, body.kind);
 
   sendSuccess(res, { call }, 201);
 }

@@ -8867,16 +8867,20 @@ paths:
         - Calls
       summary: Start a video call
       description: "Creates the call and returns a room token for YOU: `video.token`
-        for `video.room_name` on `video.server_url` (LiveKit). `server_url` is
-        null where no media server is configured — the call still rings, is
-        answered and ends, so show that video is unavailable rather than
-        failing. The body names a **match**, never a user and never a room — a
-        client-named room is how someone gets a token for a call they were not
-        invited to. The other person receives a `call:incoming` socket event and
-        a push carrying the same `call_id`; treat both as one call. Calling an
-        already-live call on the same match returns that call rather than
-        starting a second one, because two rooms for one conversation means two
-        people in different rooms."
+        for `video.room_name` on `video.server_url` (LiveKit). `kind` is `video`
+        (the default) or `audio` for a voice call; it is stored on the call and
+        repeated in the `call:incoming` event, because the ringing phone decides
+        whether to open its camera before it has spoken to anyone. Either side
+        may turn video on mid-call — the stored kind is what the call started
+        as. `server_url` is null where no media server is configured — the call
+        still rings, is answered and ends, so show that video is unavailable
+        rather than failing. The body names a **match**, never a user and never
+        a room — a client-named room is how someone gets a token for a call they
+        were not invited to. The other person receives a `call:incoming` socket
+        event and a push carrying the same `call_id`; treat both as one call.
+        Calling an already-live call on the same match returns that call rather
+        than starting a second one, because two rooms for one conversation means
+        two people in different rooms."
       security:
         - bearerAuth: []
       requestBody:
@@ -8889,6 +8893,12 @@ paths:
                 match_id:
                   type: string
                   format: uuid
+                kind:
+                  type: string
+                  enum:
+                    - video
+                    - audio
+                  default: video
               required:
                 - match_id
               additionalProperties: false

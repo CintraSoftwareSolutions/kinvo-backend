@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { MessageType, Mode, NotificationCategory } from '@/db/prisma';
+import { CallKind, MessageType, Mode, NotificationCategory } from '@/db/prisma';
 
 /**
  * The realtime contract (spec §7, Batch 9).
@@ -169,6 +169,12 @@ export const SERVER_EVENT_SCHEMAS = {
     call_id: z.string().uuid(),
     match_id: z.string().uuid(),
     mode: z.nativeEnum(Mode),
+    /**
+     * `video` or `audio`. Answering an `audio` call must not open the camera:
+     * this is the only thing the ringing phone knows before it picks up, so a
+     * client that ignores it turns a voice call into a video one.
+     */
+    kind: z.nativeEnum(CallKind),
     from: userCompactShape,
   }),
 

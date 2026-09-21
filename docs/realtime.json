@@ -477,6 +477,13 @@
               "fitness"
             ]
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "video",
+              "audio"
+            ]
+          },
           "from": {
             "type": "object",
             "properties": {
@@ -526,6 +533,7 @@
           "call_id",
           "match_id",
           "mode",
+          "kind",
           "from"
         ],
         "additionalProperties": false

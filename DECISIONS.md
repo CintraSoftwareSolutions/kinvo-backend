@@ -1420,6 +1420,41 @@ The webhook tests refuse an unsigned callback, a forged header and a body whose
 hash cannot match, and assert in each case that the call is still active
 afterwards.
 
+### 2026-09-21 — Voice calls: a kind on the call, not on the caller's phone
+
+Asked for by the product owner, who wants the chat header to offer both a
+video call and a voice call, as every messaging app does.
+
+**Why this is a column and not a client setting.** A voice call could almost be
+done in the app alone: the caller simply does not publish their camera. Almost,
+because the other phone has to decide whether to open ITS camera the moment the
+call is answered, and the only thing it has at that point is the
+`call:incoming` event. Keep the kind on the caller's phone and answering a
+voice call opens the callee's camera — the one thing a voice call must not do.
+
+So `call_sessions.kind` is `video` or `audio`, defaulting to **video**: a
+client that has never heard of the column keeps behaving exactly as it did, and
+so does an old row. `POST /calls` takes an optional `kind`, `call:incoming`
+repeats it, and every call view carries it.
+
+**The kind is what the call STARTED as.** Either side may turn video on
+mid-call, and that does not rewrite the row: history should say what was
+started, and a call that began as voice and became video is a fact about the
+conversation, not a correction to it.
+
+Nothing else changed. Both kinds use the same room, the same token and the same
+permission check — a voice call is not a cheaper or looser call, it is the same
+call with one track fewer at the start.
+
+**The migration was written by hand.** The GIST-index trap has now fired twice
+on generated migrations; this one adds an enum and a column, so there was
+nothing to generate that was worth the risk of stripping four DROP INDEX
+statements again.
+
+**Tests:** a voice call is stored and read back as `audio` by both sides, an
+unknown kind is a 400, and the default is asserted where a call is started
+without one.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started
