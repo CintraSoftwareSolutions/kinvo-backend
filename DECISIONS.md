@@ -1481,6 +1481,25 @@ The title and body still travel in a data-only message, as data, so the app
 can draw them. Nothing else about push changed: every other notification goes
 out exactly as before, which a test asserts alongside the new one.
 
+### 2026-09-22 — Credentials a rebuilt server keeps
+
+Phone sign-in got its Twilio account today, and video got its LiveKit project
+yesterday. Both were typed straight into /opt/kinvo/.env on the running
+instance, which works exactly until that instance is replaced: the settings
+file is rebuilt from user-data.sh, and whatever was typed into the old one is
+gone. Calling and phone sign-in would stop, quietly, with nothing to say why.
+
+So every third-party credential now lives in SSM Parameter Store beside the
+ones that were already there, and user-data.sh appends each one it finds. A
+missing parameter is not an error — an environment with no Twilio account
+still boots and falls back to the stub, the way development does.
+
+They are NOT in Terraform. Putting them there would mean holding the client
+credential in a variable file or in state, and rotating a token would become a
+code change. Terraform manages the secrets this stack generates; the ones
+somebody else issues are put in by hand, under a path the instance policy
+already grants.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

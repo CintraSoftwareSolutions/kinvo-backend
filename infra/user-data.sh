@@ -111,6 +111,36 @@ if [ -n "$FIREBASE_JSON" ]; then
 ' "$FIREBASE_JSON" >> "$APP_DIR/.env"
 fi
 
+# The third-party accounts, each optional.
+#
+# WHY THIS LOOP EXISTS: SMS and video were added to a running server by hand,
+# straight into this file. That works until the instance is replaced, at which
+# point phone sign-in and calling quietly stop working and nothing says why —
+# the settings file is rebuilt from this script, and what was typed into the
+# old one is gone. Anything the server needs belongs in Parameter Store, and
+# anything in Parameter Store belongs here.
+#
+# A missing parameter is not an error: a deployment without a Twilio account
+# still boots, and falls back to the stub the way development does.
+append_secret() {
+  local name="$1"
+  local variable="$2"
+  local value
+
+  value=$(get_secret "$name" 2>/dev/null || true)
+
+  if [ -n "$value" ] && [ "$value" != "None" ]; then
+    printf '%s=%s\n' "$variable" "$value" >> "$APP_DIR/.env"
+  fi
+}
+
+append_secret twilio_account_sid TWILIO_ACCOUNT_SID
+append_secret twilio_auth_token TWILIO_AUTH_TOKEN
+append_secret twilio_verify_service_sid TWILIO_VERIFY_SERVICE_SID
+append_secret livekit_url LIVEKIT_URL
+append_secret livekit_api_key LIVEKIT_API_KEY
+append_secret livekit_api_secret LIVEKIT_API_SECRET
+
 chmod 600 "$APP_DIR/.env"
 
 cat > "$APP_DIR/db.env" <<DBENV

@@ -37,6 +37,16 @@ resource "random_password" "origin_secret" {
   special = false
 }
 
+# Only the secrets this stack GENERATES.
+#
+# Third-party credentials — Firebase, Twilio, LiveKit — are put into Parameter
+# Store by hand under the same path, and read by `user-data.sh`. They are not
+# here on purpose: putting them in Terraform would mean holding someone else's
+# production credential in a variable file or a state file, and rotating it
+# would become a code change.
+#
+# The instance policy below grants the whole path, so a credential added by
+# hand needs no change here to be readable.
 locals {
   secrets = {
     jwt_access_secret  = random_password.jwt_access.result
