@@ -1544,6 +1544,26 @@ Twilio code, the HTTP status and the last four digits, which is what a report
 is recognised by. The outage path still logs the whole error: diagnosing an
 outage needs it, and those messages carry no number.
 
+The same afternoon, the first real phone sign-in from a handset failed with
+Twilio 21608: _"To send messages or make calls to unverified numbers, you must
+have an approved Primary Compliance Profile."_ The account is a full one, not
+a trial — that was checked when it was set up — but Twilio now gates sending
+to any unverified number behind a compliance profile, and this one has not
+been completed. Until it is, Verify can only text numbers added as verified
+caller IDs in the console.
+
+That is not an outage and not the number's fault, so neither existing answer
+fitted. It now maps to its own message: _"We cannot send text messages at the
+moment. Please sign in with your email address instead."_ — the app does offer
+email, so the person is pointed at something that works rather than told to
+try again shortly, which would never have succeeded.
+
+21408 (the destination country switched off in the account's geo permissions)
+is mapped with it. It is the same class of problem, only an operator can clear
+either, and it is the usual next surprise once the profile is approved. Both
+are logged at error with the whole exception, because both need somebody to go
+into the Twilio console.
+
 ### 2026-09-22 — One photo was all anyone could see of anyone
 
 Every screen that shows another person — a deck card, a match, a profile —

@@ -93,6 +93,32 @@ function describeRefusal(error: unknown, phone: string) {
   return { twilio_code: code, twilio_status: status, phone_suffix: phone.slice(-4) };
 }
 
+/**
+ * Failures that are about THIS Twilio account rather than about the number.
+ *
+ * Kept apart from {@link twilioRefusal} because they are nobody's fault but
+ * ours, and because the honest thing to tell someone is not "try again
+ * shortly" — it will fail identically every time until an operator fixes the
+ * account. The app offers email sign-in, so that is what to point at.
+ *
+ * - 21608: no approved compliance profile, so only numbers verified in the
+ *   Twilio console can be texted. This is what staging hit on 22 Sep 2026.
+ * - 21408: that country is switched off in the account's geo permissions,
+ *   which is the usual next surprise once 21608 is cleared.
+ */
+function accountCannotText(error: unknown): ApiError | null {
+  const { code } = (error ?? {}) as { code?: number };
+
+  if (code !== 21608 && code !== 21408) {
+    return null;
+  }
+
+  return new ApiError(
+    ERROR_CODES.SERVICE_UNAVAILABLE,
+    'We cannot send text messages at the moment. Please sign in with your email address instead.',
+  );
+}
+
 let client: Twilio | null = null;
 
 function getClient(): Twilio {
@@ -115,6 +141,14 @@ const twilioProvider: OtpProvider = {
       if (refused) {
         logger.warn(describeRefusal(error, phone), 'twilio verify send refused');
         throw refused;
+      }
+
+      const misconfigured = accountCannotText(error);
+      if (misconfigured) {
+        // Loud, because only an operator can clear it: the compliance profile
+        // or the country's geo permission in the Twilio console.
+        logger.error({ err: error }, 'twilio cannot text anyone from this account');
+        throw misconfigured;
       }
 
       logger.error({ err: error }, 'twilio verify send failed');

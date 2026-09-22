@@ -91,6 +91,14 @@ describe('turning a Twilio failure into an answer', () => {
     expect(twilioRefusal(undefined)).toBeNull();
   });
 
+  it('leaves an account that is not allowed to text to the outage path', () => {
+    // 21608 (no compliance profile) and 21408 (country switched off) are not
+    // about the number, so they must not come back as a field error — the
+    // person typing it can do nothing about either.
+    expect(twilioRefusal(restException(21608, 403))).toBeNull();
+    expect(twilioRefusal(restException(21408, 403))).toBeNull();
+  });
+
   it('never leaks the number into the message', () => {
     const refusal = twilioRefusal(restException(60200));
 
