@@ -1535,6 +1535,15 @@ which needs no Twilio account, plus the staging request that started this. The
 stub's doc comment was corrected while here: staging has had Twilio credentials
 since this morning, so the stub is now a local-development fallback only.
 
+A follow-up the same day: the refusal was being logged with the exception
+attached, and Twilio writes the number into its own message ("Invalid
+parameter `To`: +44…"). The redaction in `logger.ts` covers fields named
+`phone`, not text inside another field, so the number reached the log next to
+the `phone_suffix` that exists to avoid exactly that. The refusal now logs the
+Twilio code, the HTTP status and the last four digits, which is what a report
+is recognised by. The outage path still logs the whole error: diagnosing an
+outage needs it, and those messages carry no number.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

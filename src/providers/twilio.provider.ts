@@ -79,6 +79,20 @@ export function twilioRefusal(error: unknown): ApiError | null {
   return status === 429 ? new ApiError(ERROR_CODES.RATE_LIMITED) : null;
 }
 
+/**
+ * What to log about a refusal.
+ *
+ * NOT the exception: Twilio puts the number in its message ("Invalid parameter
+ * `To`: +44…"), and the redaction in logger.ts covers fields, not text inside
+ * one. The code is what identifies the problem anyway; the last four digits are
+ * enough to recognise a report.
+ */
+function describeRefusal(error: unknown, phone: string) {
+  const { status, code } = (error ?? {}) as { status?: number; code?: number };
+
+  return { twilio_code: code, twilio_status: status, phone_suffix: phone.slice(-4) };
+}
+
 let client: Twilio | null = null;
 
 function getClient(): Twilio {
@@ -99,7 +113,7 @@ const twilioProvider: OtpProvider = {
     } catch (error) {
       const refused = twilioRefusal(error);
       if (refused) {
-        logger.warn({ err: error, phone_suffix: phone.slice(-4) }, 'twilio verify send refused');
+        logger.warn(describeRefusal(error, phone), 'twilio verify send refused');
         throw refused;
       }
 
@@ -128,7 +142,7 @@ const twilioProvider: OtpProvider = {
 
       const refused = twilioRefusal(error);
       if (refused) {
-        logger.warn({ err: error, phone_suffix: phone.slice(-4) }, 'twilio verify check refused');
+        logger.warn(describeRefusal(error, phone), 'twilio verify check refused');
         throw refused;
       }
 
