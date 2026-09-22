@@ -1500,6 +1500,41 @@ code change. Terraform manages the secrets this stack generates; the ones
 somebody else issues are put in by hand, under a path the instance policy
 already grants.
 
+### 2026-09-22 — A number Twilio will not text is not an outage
+
+Staging's first live phone sign-in answered `503 SERVICE_UNAVAILABLE`, "We
+could not verify that code right now. Please try again shortly." Nothing was
+down. Twilio had refused the number with error 60200, `Invalid parameter To` —
+the number used in the smoke test is a UK range reserved for drama, real
+enough to pass an E.164 regex and impossible to text.
+
+The provider caught every Twilio exception the same way, so "this number
+cannot receive a text" and "Twilio is having a bad day" produced the same
+answer. That answer is advice nobody can act on, on the one screen a new user
+cannot get past, and the app would keep retrying a number that can never work.
+
+`twilioRefusal` now sorts the failures Twilio blames on the request from the
+ones it blames on itself:
+
+- 60200 invalid `To` and 60205 landline become `VALIDATION_FAILED` with the
+  message on the `phone` field, so the app can put it under the box the person
+  is looking at.
+- 60202 (too many wrong codes), 60203 (too many codes sent) and 60212 (one
+  already on its way) become `RATE_LIMITED`, each saying which one it is —
+  they clear with time, and two of them mean asking for a new code rather than
+  trying the old one again.
+- A bare `429` from Twilio is a rate limit even when no code comes with it.
+- Anything else is still logged at error and still answers 503. A refusal is
+  logged at warn with the last four digits only, as before.
+
+`status === 404` keeps its own path ahead of this: an expired or already-used
+verification is a wrong-code outcome, not a refusal, and must read as one.
+
+Verified with unit tests over the mapping itself (`tests/unit/otp-provider.test.ts`),
+which needs no Twilio account, plus the staging request that started this. The
+stub's doc comment was corrected while here: staging has had Twilio credentials
+since this morning, so the stub is now a local-development fallback only.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

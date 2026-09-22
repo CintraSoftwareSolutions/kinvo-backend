@@ -30,6 +30,55 @@ function hasCredentials(): boolean {
   return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID);
 }
 
+/**
+ * Twilio failures that are about the number or the code rather than about
+ * Twilio, turned into the error the caller should actually see.
+ *
+ * Both kinds arrive as the same exception, and treating all of them as an
+ * outage told people to "try again shortly" when their number simply could not
+ * receive a text — advice that can never work, on a screen they cannot get
+ * past. Returns null when the failure really is Twilio's.
+ *
+ * Codes: https://www.twilio.com/docs/api/errors
+ *
+ * Exported so the mapping can be tested without a Twilio account.
+ */
+export function twilioRefusal(error: unknown): ApiError | null {
+  const { status, code } = (error ?? {}) as { status?: number; code?: number };
+
+  switch (code) {
+    // 60200 invalid `To`, 60205 landline: numbers Twilio cannot text, whether
+    // mistyped, fixed-line, or from a reserved range that only looks real.
+    case 60200:
+    case 60205:
+      return ApiError.validation({
+        phone: ['That number cannot receive a text. Check it and try again.'],
+      });
+
+    // Twilio's own limits, on top of ours. Both clear with time, and both mean
+    // a new code rather than another attempt at the old one.
+    case 60202:
+      return new ApiError(
+        ERROR_CODES.RATE_LIMITED,
+        'Too many wrong codes for that number. Ask for a new one.',
+      );
+    case 60203:
+      return new ApiError(
+        ERROR_CODES.RATE_LIMITED,
+        'Too many codes sent to that number. Wait a few minutes and try again.',
+      );
+    case 60212:
+      return new ApiError(
+        ERROR_CODES.RATE_LIMITED,
+        'That number has a code on its way already. Wait for it, or try again in a minute.',
+      );
+    default:
+      break;
+  }
+
+  return status === 429 ? new ApiError(ERROR_CODES.RATE_LIMITED) : null;
+}
+
 let client: Twilio | null = null;
 
 function getClient(): Twilio {
@@ -48,6 +97,12 @@ const twilioProvider: OtpProvider = {
 
       return { status: verification.status };
     } catch (error) {
+      const refused = twilioRefusal(error);
+      if (refused) {
+        logger.warn({ err: error, phone_suffix: phone.slice(-4) }, 'twilio verify send refused');
+        throw refused;
+      }
+
       logger.error({ err: error }, 'twilio verify send failed');
       throw new ApiError(
         ERROR_CODES.SERVICE_UNAVAILABLE,
@@ -71,6 +126,12 @@ const twilioProvider: OtpProvider = {
         return { valid: false, status: 'expired' };
       }
 
+      const refused = twilioRefusal(error);
+      if (refused) {
+        logger.warn({ err: error, phone_suffix: phone.slice(-4) }, 'twilio verify check refused');
+        throw refused;
+      }
+
       logger.error({ err: error }, 'twilio verify check failed');
       throw new ApiError(
         ERROR_CODES.SERVICE_UNAVAILABLE,
@@ -88,8 +149,10 @@ const twilioProvider: OtpProvider = {
  * validation makes all three Twilio variables mandatory and this object can
  * never be reached — an OTP bypass in production would be catastrophic.
  *
- * It IS reachable on staging, which is the point: staging has no Twilio account
- * and still has to let the mobile team complete a phone sign-in.
+ * It IS reachable wherever the waiver is on and the credentials are absent:
+ * a developer's machine, CI, and a staging box whose Twilio parameters have not
+ * been filled in. Staging's were filled in on 22 Sep 2026, so staging now sends
+ * real texts and this stub is for local work.
  */
 const DEV_CODE = '000000';
 
