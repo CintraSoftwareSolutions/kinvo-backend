@@ -1544,6 +1544,44 @@ Twilio code, the HTTP status and the last four digits, which is what a report
 is recognised by. The outage path still logs the whole error: diagnosing an
 outage needs it, and those messages carry no number.
 
+### 2026-09-22 — One photo was all anyone could see of anyone
+
+Every screen that shows another person — a deck card, a match, a profile —
+rendered `user_compact.primary_photo_url`, and that was the only photo the API
+would give. People upload up to six, arrange them, and nobody but they
+themselves ever saw past the first. On a dating product that is not a missing
+nicety; it is the thing being decided on.
+
+Two shapes now carry the album:
+
+- `GET /users/{id}` gains `photos`: every approved photo, in the order its
+  owner arranged them. A full profile is one person, so the album belongs on
+  it. `user.primary_photo_url` now comes from `photos[0]` instead of a second
+  query and a second presign — the same image either way.
+- A deck card gains the same list. The card is where the looking happens, and
+  the two alternatives were both worse: a request per card as it is opened is
+  the N+1 §4.7 exists to prevent, and fetching on first swipe makes the swipe
+  wait on the network.
+
+`user_compact` is unchanged, deliberately. It is one Dart model shared by every
+list — matches, likes-you, conversation headers, call screens — and presigning
+a whole album per row for lists that show one thumbnail would cost real work on
+every screen to feed a gallery none of them has.
+
+`PublicPhotoView` is smaller than the owner's `PhotoView`: no
+`moderation_status`, because that is the owner's business and a viewer is only
+ever shown approved photos anyway, and no `is_primary`, because the list is
+ordered and the first one is it. Width and height travel with each photo so the
+app can hold the right shape of space while the picture loads.
+
+Pending moderation still means invisible to everyone but the owner (§4.8),
+which is tested on both paths: a photo set back to `pending` disappears from
+the gallery and from the card while staying in its owner's own album.
+
+`getApprovedPhotosForMany` is the bulk form, one query and one presign pass for
+a whole deck page. Presigning is local work — an HMAC, not a round trip — so
+the cost of a page of albums is the response size, not the latency.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

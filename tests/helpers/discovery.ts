@@ -1,5 +1,6 @@
 import { type Coordinates, setProfileLocation } from '@/db/geo';
-import { type Mode, type UserStatus, prisma } from '@/db/prisma';
+import { env } from '@config/env';
+import { ModerationStatus, type Mode, type UserStatus, prisma } from '@/db/prisma';
 import { issueTokenPair } from '@modules/auth/token.service';
 import type { AuthTokens } from '@modules/auth/auth.types';
 import { LONDON, adultDateOfBirth, uniqueEmail } from './factories';
@@ -81,4 +82,37 @@ export async function createDiscoverableViewer(
   const tokens = await issueTokenPair(user.id);
 
   return { user_id: user.id, profile_id: profile.id, tokens };
+}
+
+/**
+ * Photo rows for a profile, without going through an upload.
+ *
+ * The deck's users are made straight in the database, so their photos are too.
+ * Presigning only needs a bucket and a key, which is why a key that was never
+ * uploaded still produces a usable URL to assert on.
+ */
+export async function seedPhotos(
+  profileId: string,
+  keys: string[],
+  options: { approved?: boolean; from?: number } = {},
+): Promise<void> {
+  const approved = options.approved ?? true;
+  const from = options.from ?? 0;
+
+  for (const [index, key] of keys.entries()) {
+    const position = from + index;
+    await prisma.photo.create({
+      data: {
+        profile_id: profileId,
+        s3_bucket: env.S3_MEDIA_BUCKET,
+        s3_key: `photos/${profileId}/${key}`,
+        url: '',
+        position,
+        is_primary: position === 0,
+        width: 1200,
+        height: 1600,
+        moderation_status: approved ? ModerationStatus.approved : ModerationStatus.pending,
+      },
+    });
+  }
 }

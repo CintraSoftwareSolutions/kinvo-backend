@@ -1,3 +1,4 @@
+import type { PublicPhotoView } from '@modules/media/photos.service';
 import type { UserCompact } from '@utils/compact';
 
 /** What a profile owner sees about themselves. */
@@ -41,6 +42,15 @@ export interface OwnProfile {
  */
 export interface PublicProfile {
   user: UserCompact;
+  /**
+   * Their approved photos, in the order they arranged them, the first being
+   * the one `user.primary_photo_url` points at.
+   *
+   * On the compact user there is only ever one photo, because every list
+   * returns that shape and presigning a whole album per row would be the N+1
+   * spec §4.7 forbids. A full profile is one person, so it carries the album.
+   */
+  photos: PublicPhotoView[];
   bio: string | null;
   job_title: string | null;
   organisation: string | null;

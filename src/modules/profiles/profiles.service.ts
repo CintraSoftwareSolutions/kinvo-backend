@@ -5,7 +5,7 @@ import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 import { calculateAge } from '@utils/age';
 import { toUserCompact } from '@utils/compact';
-import { getPrimaryPhotoUrlFor } from '@modules/media/photos.service';
+import { getApprovedPhotosFor } from '@modules/media/photos.service';
 import { ensureProfile } from './profile.repository';
 import {
   completionOf,
@@ -174,9 +174,14 @@ export async function getPublicProfile(
 
   const distance = await distanceShownTo(viewerId, target.id, target.profile.id, target.settings);
 
+  // Approved photos only — spec §4.8 keeps pending media owner-visible. The
+  // first is the primary, so the compact user's single photo comes from the
+  // same list rather than a second query and a second presign.
+  const photos = await getApprovedPhotosFor(target.id);
+
   return {
-    // Approved photos only — spec §4.8 keeps pending media owner-visible.
-    user: toUserCompact(target, await getPrimaryPhotoUrlFor(target.id)),
+    user: toUserCompact(target, photos[0]?.url ?? null),
+    photos,
     bio: target.profile.bio,
     job_title: target.profile.job_title,
     organisation: target.profile.organisation,

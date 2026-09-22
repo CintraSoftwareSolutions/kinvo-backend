@@ -295,6 +295,11 @@ async function isOnboarded(userId: string): Promise<boolean> {
  * Returns null unless a photo exists AND moderation has approved it — spec §4.8
  * says pending media is visible to its owner and nobody else, and a deck card
  * is the clearest place that rule could be broken.
+ *
+ * Nothing calls this today: a screen showing one person now shows their whole
+ * album through {@link getApprovedPhotosFor}, whose first entry is this photo.
+ * Kept because a caller wanting one photo and no album is a reasonable thing
+ * to want, and because it is what the bulk version below is the plural of.
  */
 export async function getPrimaryPhotoUrlFor(userId: string): Promise<string | null> {
   const photo = await prisma.photo.findFirst({
@@ -312,6 +317,102 @@ export async function getPrimaryPhotoUrlFor(userId: string): Promise<string | nu
   }
 
   return presignDownload({ bucket: photo.s3_bucket as BucketName, key: photo.s3_key });
+}
+
+/**
+ * Someone else's photo, as everyone but its owner sees it.
+ *
+ * Deliberately smaller than `PhotoView`: no moderation status, because that is
+ * the owner's business and a viewer is only ever shown approved photos anyway,
+ * and no `is_primary`, because the list is ordered and the first one IS the
+ * primary.
+ *
+ * Width and height travel with it so the app can hold the right shape of space
+ * while the picture loads, instead of the layout jumping when it arrives.
+ */
+export interface PublicPhotoView {
+  id: string;
+  url: string;
+  width: number | null;
+  height: number | null;
+}
+
+async function toPublicPhotoView(photo: {
+  id: string;
+  s3_bucket: string;
+  s3_key: string;
+  width: number | null;
+  height: number | null;
+}): Promise<PublicPhotoView> {
+  return {
+    id: photo.id,
+    url: await presignDownload({ bucket: photo.s3_bucket as BucketName, key: photo.s3_key }),
+    width: photo.width,
+    height: photo.height,
+  };
+}
+
+/**
+ * Everyone's approved photos, in the order they arranged them.
+ *
+ * Spec §4.8: pending media is visible to its owner and nobody else, so a photo
+ * still in moderation is absent here even though its owner can see it in their
+ * own album.
+ */
+export async function getApprovedPhotosFor(userId: string): Promise<PublicPhotoView[]> {
+  const photos = await prisma.photo.findMany({
+    where: {
+      profile: { user_id: userId },
+      deleted_at: null,
+      moderation_status: ModerationStatus.approved,
+    },
+    orderBy: { position: 'asc' },
+    select: { id: true, s3_bucket: true, s3_key: true, width: true, height: true },
+  });
+
+  return Promise.all(photos.map(toPublicPhotoView));
+}
+
+/**
+ * The same, for many users at once.
+ *
+ * A deck page asking per card is the N+1 that spec §4.7 exists to prevent, and
+ * the presigning itself is local work, so one query and one pass covers a whole
+ * page. Users with no approved photos are absent from the map; callers use
+ * `?? []`, never a missing key (spec §4.6).
+ */
+export async function getApprovedPhotosForMany(
+  userIds: string[],
+): Promise<Map<string, PublicPhotoView[]>> {
+  if (userIds.length === 0) {
+    return new Map();
+  }
+
+  const photos = await prisma.photo.findMany({
+    where: {
+      profile: { user_id: { in: userIds } },
+      deleted_at: null,
+      moderation_status: ModerationStatus.approved,
+    },
+    orderBy: { position: 'asc' },
+    select: {
+      id: true,
+      s3_bucket: true,
+      s3_key: true,
+      width: true,
+      height: true,
+      profile: { select: { user_id: true } },
+    },
+  });
+
+  const byUser = new Map<string, PublicPhotoView[]>();
+  for (const photo of photos) {
+    const views = byUser.get(photo.profile.user_id) ?? [];
+    views.push(await toPublicPhotoView(photo));
+    byUser.set(photo.profile.user_id, views);
+  }
+
+  return byUser;
 }
 
 /** Batch 5 will require at least one approved photo before onboarding completes. */

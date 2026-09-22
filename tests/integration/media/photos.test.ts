@@ -426,6 +426,81 @@ describe('photos on the public profile (spec §4.7)', () => {
     expect(response.body.data.user).toHaveProperty('primary_photo_url', null);
   });
 
+  it('returns every approved photo, in the order they were arranged', async () => {
+    const alice = await createAuthenticatedUser();
+    const viewer = await createAuthenticatedUser();
+    const first = await addPhoto(alice.tokens);
+    const second = await addPhoto(alice.tokens);
+    const third = await addPhoto(alice.tokens);
+
+    const response = await api
+      .get(`${API_PREFIX}/users/${alice.user_id}`)
+      .set(authHeader(viewer.tokens));
+
+    expect(response.body.data.photos).toHaveLength(3);
+    expect(response.body.data.photos.map((photo: { id: string }) => photo.id)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+    // The first IS the primary, so the compact user needs no second query.
+    expect(response.body.data.user.primary_photo_url).toBe(response.body.data.photos[0].url);
+  });
+
+  it('tells a viewer nothing about moderation, only what to show', async () => {
+    const alice = await createAuthenticatedUser();
+    const viewer = await createAuthenticatedUser();
+    await addPhoto(alice.tokens);
+
+    const response = await api
+      .get(`${API_PREFIX}/users/${alice.user_id}`)
+      .set(authHeader(viewer.tokens));
+
+    expect(Object.keys(response.body.data.photos[0]).sort()).toEqual([
+      'height',
+      'id',
+      'url',
+      'width',
+    ]);
+  });
+
+  it('leaves a photo awaiting moderation out of the gallery (spec §4.8)', async () => {
+    const alice = await createAuthenticatedUser();
+    const viewer = await createAuthenticatedUser();
+    await addPhoto(alice.tokens);
+    const waiting = await addPhoto(alice.tokens);
+
+    await prisma.photo.update({
+      where: { id: waiting.id as string },
+      data: { moderation_status: 'pending' },
+    });
+
+    const response = await api
+      .get(`${API_PREFIX}/users/${alice.user_id}`)
+      .set(authHeader(viewer.tokens));
+
+    expect(response.body.data.photos).toHaveLength(1);
+    // Its owner still sees it in their own album.
+    const own = await api.get(`${MEDIA_BASE}/photos`).set(authHeader(alice.tokens));
+    expect(own.body.data.photos).toHaveLength(2);
+  });
+
+  it('returns an empty list, never null, for someone with no photos', async () => {
+    const alice = await createAuthenticatedUser();
+    const viewer = await createAuthenticatedUser();
+
+    await api
+      .patch(`${API_PREFIX}/users/me`)
+      .set(authHeader(alice.tokens))
+      .send({ bio: 'No photos yet.' });
+
+    const response = await api
+      .get(`${API_PREFIX}/users/${alice.user_id}`)
+      .set(authHeader(viewer.tokens));
+
+    expect(response.body.data.photos).toEqual([]);
+  });
+
   it('hides a photo that moderation has not approved (spec §4.8)', async () => {
     const alice = await createAuthenticatedUser();
     const viewer = await createAuthenticatedUser();

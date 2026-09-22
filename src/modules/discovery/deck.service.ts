@@ -1,7 +1,7 @@
 import { DISCOVERY } from '@config/constants';
 import { type Mode, type Prisma, type UserModeModel, prisma } from '@/db/prisma';
 import { findProfilesWithinRadius, getProfileCoordinates } from '@/db/geo';
-import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
+import { type PublicPhotoView, getApprovedPhotosForMany } from '@modules/media/photos.service';
 import { getBlockedUserIds, visibleUserFilter } from '@modules/safety/block.service';
 import { ApiError } from '@utils/api-error';
 import { dateOfBirthRangeForAges } from '@utils/age';
@@ -31,6 +31,14 @@ export interface DeckCard {
   /** spec §4.6: metres. The client formats to miles. */
   distance_metres: number | null;
   user: UserCompact;
+  /**
+   * Their approved photos, in order. The card carries the album rather than
+   * the one photo on `user`, because looking through someone's pictures is
+   * the decision this screen exists to support — fetching the rest per card
+   * would be the N+1 spec §4.7 forbids, and asking for them only when a card
+   * is opened would make the first swipe wait on a request.
+   */
+  photos: PublicPhotoView[];
   bio: string | null;
   interests: string[];
 }
@@ -377,7 +385,7 @@ export async function getDeck(
   const page = paginate(rows, options.limit, (row) => ({ k: row.position, id: row.id }));
 
   // One presign pass for the whole page rather than one per card (spec §4.7).
-  const photoUrls = await getPrimaryPhotoUrlsFor(page.items.map((row) => row.target.id));
+  const photos = await getApprovedPhotosForMany(page.items.map((row) => row.target.id));
 
   const cards: DeckCard[] = page.items.map((row) => ({
     entry_id: row.id,
@@ -386,7 +394,8 @@ export async function getDeck(
     // built, so turning it off hides the distance at once. No settings row
     // means the default, which is to show it.
     distance_metres: row.target.settings?.show_distance === false ? null : row.distance_metres,
-    user: toUserCompact(row.target, photoUrls.get(row.target.id) ?? null),
+    user: toUserCompact(row.target, photos.get(row.target.id)?.[0]?.url ?? null),
+    photos: photos.get(row.target.id) ?? [],
     bio: row.target.profile?.bio ?? null,
     interests: row.target.profile?.interests.map((link) => link.interest.slug) ?? [],
   }));

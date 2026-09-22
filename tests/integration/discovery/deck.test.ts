@@ -4,7 +4,11 @@ import { generateDeck, scoreCandidate } from '@modules/discovery/deck.service';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader } from '../../helpers/auth';
 import { CAMDEN, LONDON, MANCHESTER, createBlock } from '../../helpers/factories';
-import { createDiscoverableUser, createDiscoverableViewer } from '../../helpers/discovery';
+import {
+  createDiscoverableUser,
+  createDiscoverableViewer,
+  seedPhotos,
+} from '../../helpers/discovery';
 import { api, expectErrorEnvelope, expectSuccessEnvelope } from '../../helpers/request';
 import { connectRedis, disconnectRedis, seedEntitlements } from '../../helpers/entitlements';
 
@@ -89,6 +93,49 @@ describe('GET /discovery/:mode/deck', () => {
     ]);
     expect(card).toHaveProperty('bio');
     expect(card).toHaveProperty('interests');
+  });
+
+  it('carries every approved photo, in order, so a card can be looked through', async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const { profile } = await createDiscoverableUser({
+      mode: Mode.dating,
+      coordinates: CAMDEN,
+    });
+    await seedPhotos(profile.id, ['first.jpg', 'second.jpg']);
+
+    const response = await api.get(DECK('dating')).set(authHeader(viewer.tokens));
+
+    const card = response.body.data[0];
+    expect(card.photos).toHaveLength(2);
+    expect(card.photos[0].url).toEqual(expect.stringContaining('first.jpg'));
+    expect(card.photos[1].url).toEqual(expect.stringContaining('second.jpg'));
+    // The one photo on the compact user is the first of the same list.
+    expect(card.user.primary_photo_url).toBe(card.photos[0].url);
+  });
+
+  it('leaves photos awaiting moderation off the card (spec §4.8)', async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const { profile } = await createDiscoverableUser({
+      mode: Mode.dating,
+      coordinates: CAMDEN,
+    });
+    await seedPhotos(profile.id, ['approved.jpg']);
+    await seedPhotos(profile.id, ['waiting.jpg'], { approved: false, from: 1 });
+
+    const response = await api.get(DECK('dating')).set(authHeader(viewer.tokens));
+
+    expect(response.body.data[0].photos).toHaveLength(1);
+    expect(response.body.data[0].photos[0].url).toEqual(expect.stringContaining('approved.jpg'));
+  });
+
+  it('gives someone with no photos an empty list, never null', async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+
+    const response = await api.get(DECK('dating')).set(authHeader(viewer.tokens));
+
+    expect(response.body.data[0].photos).toEqual([]);
+    expect(response.body.data[0].user.primary_photo_url).toBeNull();
   });
 
   it('requires a token', async () => {
