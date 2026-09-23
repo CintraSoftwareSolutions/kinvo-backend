@@ -140,6 +140,9 @@ append_secret twilio_verify_service_sid TWILIO_VERIFY_SERVICE_SID
 append_secret livekit_url LIVEKIT_URL
 append_secret livekit_api_key LIVEKIT_API_KEY
 append_secret livekit_api_secret LIVEKIT_API_SECRET
+# Not a secret — it identifies the application and ships inside the app —
+# but it belongs with the rest so a rebuilt server keeps Google sign-in.
+append_secret google_oauth_client_ids GOOGLE_OAUTH_CLIENT_IDS
 
 chmod 600 "$APP_DIR/.env"
 

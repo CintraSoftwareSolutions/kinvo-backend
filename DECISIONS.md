@@ -1602,6 +1602,33 @@ the gallery and from the card while staying in its owner's own album.
 a whole deck page. Presigning is local work — an HMAC, not a round trip — so
 the cost of a page of albums is the response size, not the latency.
 
+### 2026-09-23 — Google sign-in, switched on
+
+The endpoint and the verification have been there since Batch 2; what was
+missing was an audience. `GOOGLE_OAUTH_CLIENT_IDS` was empty on staging, so
+`verifyGoogleIdToken` refused every token before looking at it — correctly,
+since an audience of nothing can match nothing.
+
+The project's Google sign-in was enabled in the Firebase console (it had never
+been: the Identity Toolkit answered `CONFIGURATION_NOT_FOUND`, and enabling a
+provider through the API needs a client id and secret that only the console
+mints). That created the web client id, which is now the single audience in
+`GOOGLE_OAUTH_CLIENT_IDS`, in Parameter Store beside the other third-party
+settings and appended by `user-data.sh` so a rebuilt server keeps it.
+
+It is not a secret — it identifies the application and ships inside the app —
+but it lives with the secrets because the alternative is a server that boots
+fine and refuses every Google sign-in with nothing to say why.
+
+The Android side needed the app's signing fingerprint registered against
+`com.example.kinvo`, which is what lets Google issue a token to the app at
+all. That was added through the Management API rather than by hand.
+
+Verified on staging: a made-up token now comes back `401
+AUTH_TOKEN_INVALID`, where an unconfigured server answers `503 Google sign-in
+is not available right now`. The difference is the whole point — the first
+means the audience is set and Google's keys were consulted.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started
