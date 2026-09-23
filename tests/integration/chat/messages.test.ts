@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { API_PREFIX } from '@config/constants';
 import { Mode, prisma } from '@/db/prisma';
 import { ENTITLEMENT_KEYS } from '@modules/entitlements/entitlements.types';
@@ -504,6 +506,113 @@ describe('the daily message cap (spec §5.4)', () => {
       const response = await sendText(a, conversation_id, `message ${i}`);
       expect(response.status).toBe(201);
     }
+  });
+
+  it('sending the same client token twice leaves one message', async () => {
+    const { a, conversation_id } = await matchPair(Mode.dating);
+    const clientToken = randomUUID();
+
+    const first = await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'Did that send?', client_token: clientToken });
+
+    // The app never heard the first answer, so it tries again.
+    const second = await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'Did that send?', client_token: clientToken });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.data.id).toBe(first.body.data.id);
+
+    const messages = await prisma.message.count({
+      where: { conversation_id, sender_id: a.user_id },
+    });
+    expect(messages).toBe(1);
+  });
+
+  it('does not spend a second message from the allowance on a retry', async () => {
+    const { a, conversation_id } = await matchPair(Mode.dating);
+    await setFlag('free', ENTITLEMENT_KEYS.DAILY_MESSAGE_LIMIT, 3);
+    await resetQuotas(a.user_id);
+    const clientToken = randomUUID();
+
+    const body = { type: 'text', body: 'Twice sent, once meant', client_token: clientToken };
+    await api.post(`${CONV}/${conversation_id}/messages`).set(authHeader(a.tokens)).send(body);
+    const second = await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send(body);
+
+    expect(second.status).toBe(201);
+
+    // One message written, so one message charged for.
+    const entitlements = await api.get(`${API_PREFIX}/me/entitlements`).set(authHeader(a.tokens));
+    expect(entitlements.body.data.quotas.messages.used).toBe(1);
+  });
+
+  it('two different tokens are two different messages', async () => {
+    const { a, conversation_id } = await matchPair(Mode.dating);
+
+    await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'One', client_token: randomUUID() });
+    await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'Two', client_token: randomUUID() });
+
+    expect(await prisma.message.count({ where: { conversation_id, sender_id: a.user_id } })).toBe(
+      2,
+    );
+  });
+
+  it('the same token from the other person is their own message', async () => {
+    const { a, b, conversation_id } = await matchPair(Mode.dating);
+    const clientToken = randomUUID();
+
+    const mine = await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'Mine', client_token: clientToken });
+    const theirs = await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(b.tokens))
+      .send({ type: 'text', body: 'Theirs', client_token: clientToken });
+
+    // Scoped to the sender: one person cannot swallow another's message by
+    // choosing the same token.
+    expect(theirs.status).toBe(201);
+    expect(theirs.body.data.id).not.toBe(mine.body.data.id);
+    expect(theirs.body.data.body).toBe('Theirs');
+  });
+
+  it('messages with no token never collide with each other', async () => {
+    const { a, conversation_id } = await matchPair(Mode.dating);
+
+    await sendText(a, conversation_id, 'Same words');
+    await sendText(a, conversation_id, 'Same words');
+
+    // The index is partial for exactly this reason: an app that sends no
+    // token still sends every message.
+    expect(await prisma.message.count({ where: { conversation_id, sender_id: a.user_id } })).toBe(
+      2,
+    );
+  });
+
+  it('refuses a token that is not a uuid', async () => {
+    const { a, conversation_id } = await matchPair(Mode.dating);
+
+    const response = await api
+      .post(`${CONV}/${conversation_id}/messages`)
+      .set(authHeader(a.tokens))
+      .send({ type: 'text', body: 'Hello', client_token: 'local-1' });
+
+    expect(response.status).toBe(400);
+    expectErrorEnvelope(response.body, 'VALIDATION_FAILED');
   });
 
   it('does not charge for a message the database rejected', async () => {

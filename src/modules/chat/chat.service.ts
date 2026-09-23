@@ -1,11 +1,4 @@
-import {
-  MatchStatus,
-  MediaKind,
-  type MessageType,
-  type Mode,
-  type Prisma,
-  prisma,
-} from '@/db/prisma';
+import { MatchStatus, MediaKind, type MessageType, type Mode, Prisma, prisma } from '@/db/prisma';
 import { consumeQuota, refundQuota } from '@modules/entitlements/quota.service';
 import { claimAsset } from '@modules/media/media.service';
 import { type BucketName, presignDownload } from '@/providers/s3.provider';
@@ -379,6 +372,37 @@ function previewFor(type: MessageType, body: string | null): string {
   }
 }
 
+/**
+ * The message this token already made, if it made one.
+ *
+ * The check and the insert are not one operation, so two taps in flight at
+ * once can both miss it; the partial unique index is what actually stops the
+ * second, and the catch below turns that into this same answer. This lookup
+ * is the common case — a retry seconds later — answered without touching
+ * quota.
+ */
+async function findByClientToken(
+  viewerId: string,
+  conversationId: string,
+  clientToken: string | undefined,
+): Promise<MessageView | null> {
+  if (!clientToken) {
+    return null;
+  }
+
+  const existing = await prisma.message.findFirst({
+    where: {
+      conversation_id: conversationId,
+      sender_id: viewerId,
+      client_token: clientToken,
+      deleted_at: null,
+    },
+    select: MESSAGE_SELECT,
+  });
+
+  return existing ? toMessageView(existing) : null;
+}
+
 export async function sendMessage(
   viewerId: string,
   conversationId: string,
@@ -386,6 +410,14 @@ export async function sendMessage(
 ): Promise<MessageView> {
   const conversation = await loadParticipating(viewerId, conversationId);
   await assertWritable(conversation, viewerId);
+
+  // Before anything is claimed or spent. A send that timed out has usually
+  // arrived, and the app trying again must cost neither a second row nor a
+  // message from the day's allowance.
+  const alreadySent = await findByClientToken(viewerId, conversationId, input.client_token);
+  if (alreadySent) {
+    return alreadySent;
+  }
 
   const recipientId = otherUserId(conversation.match, viewerId);
 
@@ -431,6 +463,7 @@ export async function sendMessage(
           // pushes past a warning we record it — that is exactly what the
           // moderation team needs to see later. Batch 10 sets the flag itself.
           moderation_overridden: input.moderation_overridden ?? false,
+          client_token: input.client_token ?? null,
         },
         select: MESSAGE_SELECT,
       });
@@ -542,6 +575,18 @@ export async function sendMessage(
   } catch (error) {
     // Never charge for a message the database rejected.
     await refundQuota(viewerId, 'messages');
+
+    // Two sends of the same token at once: one wrote the row, the index
+    // refused this one. The caller asked for that message to exist, and it
+    // does, so hand it back rather than reporting a failure for something
+    // that succeeded.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const raced = await findByClientToken(viewerId, conversationId, input.client_token);
+      if (raced) {
+        return raced;
+      }
+    }
+
     throw error;
   }
 }

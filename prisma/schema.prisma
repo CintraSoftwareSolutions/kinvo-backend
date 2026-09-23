@@ -1101,6 +1101,14 @@ model Message {
   delivered_at DateTime?
   read_at      DateTime?
 
+  /// What the sending app called this message before it had an id.
+  ///
+  /// A send that times out has still often arrived, and the app trying
+  /// again is the normal thing for it to do — so the same token twice is
+  /// one message, not two. Null for a client that sends none, which is why
+  /// the unique index is partial and hand-written in the migration.
+  client_token String? @db.VarChar(64)
+
   created_at DateTime  @default(now())
   /// spec §7 Batch 1: soft delete where audit matters.
   deleted_at DateTime?

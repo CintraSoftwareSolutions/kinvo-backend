@@ -62,6 +62,15 @@ export const sendMessageSchema = z
      * server-side regardless of what arrives here.
      */
     moderation_overridden: z.boolean().optional(),
+    /**
+     * What the app calls this message before it has an id. Sending the same
+     * one twice returns the message that already exists rather than making a
+     * second — a send that times out has usually arrived, and trying again is
+     * what any app does next.
+     *
+     * A uuid, so two devices cannot pick the same one.
+     */
+    client_token: z.string().uuid('A client token must be a uuid.').optional(),
   })
   .strict()
   .refine((value) => value.type !== MessageType.text || (value.body?.length ?? 0) > 0, {

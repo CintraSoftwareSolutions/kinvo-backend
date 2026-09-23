@@ -1629,6 +1629,39 @@ AUTH_TOKEN_INVALID`, where an unconfigured server answers `503 Google sign-in
 is not available right now`. The difference is the whole point — the first
 means the audience is set and Google's keys were consulted.
 
+### 2026-09-23 — A message sent twice is still one message
+
+Sending had no protection against duplicates. A send that timed out on its way
+to the server had usually arrived, and the app offering "try again" — which is
+the right thing for it to offer — sent it a second time. The person on the
+other end saw it twice, and nothing in the system could tell that the two rows
+were one message.
+
+A message now carries `client_token`: what the sending app called it before it
+had an id. The same token twice returns the message that already exists.
+
+- **Checked before anything is spent.** The lookup runs before `claimAsset`
+  and before the quota is consumed, so a retry costs nothing from the day's
+  allowance. Charging for it and refunding later would be the same number in
+  the end and a worse story to read.
+- **A partial unique index is what actually enforces it.** Two taps in flight
+  at once both miss the lookup; the index refuses the second insert, and the
+  `P2002` is turned back into the message that won. Partial because most rows
+  have no token — every message sent before today, and any client that sends
+  none — and a plain unique index would make all of those collide.
+- **Scoped to the sender as well as the conversation**, so one person cannot
+  swallow the other's message by choosing the same token.
+- **A uuid**, refused otherwise. A counter that restarts with the app would
+  eventually claim to be a message already sent, which is the same bug wearing
+  a different hat.
+
+Migration `20260923060000_message_client_token`, hand-written for the partial
+index, which `schema.prisma` cannot express.
+
+The app sends the token from the moment the message is queued and keeps it
+through every retry — the whole point is that the second attempt is not a new
+message.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started
