@@ -30,6 +30,7 @@ import {
   updatePlanSchema,
 } from '@modules/plans/plans.schema';
 import { safetyActionSchema, startCallSchema } from '@modules/calls/calls.schema';
+import { testPurchaseSchema } from '@modules/subscriptions/subscriptions.schema';
 import { reviewDecisionSchema } from '@modules/media/media.schema';
 import * as settingsSchema from '@modules/settings/settings.schema';
 import * as usersSchema from '@modules/users/users.schema';
@@ -1129,7 +1130,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Subscriptions',
     summary: 'What is on sale',
     description:
-      'The catalogue the paywall renders: Basic and Premium, monthly and yearly. Prices are integer MINOR UNITS plus a currency — never floats — and are INFORMATIONAL, because whoever takes the payment decides what is actually charged. Readable without a token, since the paywall is shown before some sign-in flows.',
+      'The catalogue the paywall renders: Basic and Premium, monthly and yearly. Prices are integer MINOR UNITS plus a currency — never floats — and are INFORMATIONAL, because whoever takes the payment decides what is actually charged. Readable without a token, since the paywall is shown before some sign-in flows. `purchase_mode` says how a plan can be bought HERE: `test` where test purchases are switched on (staging, until RevenueCat), `none` everywhere else — show the plans, and say buying is not available yet.',
     auth: false,
     errors: [],
   },
@@ -1139,9 +1140,30 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Subscriptions',
     summary: 'Your subscription',
     description:
-      'Read `is_active` rather than inferring from `status`: a cancelled subscription is still active until its period ends, and one in billing retry still entitles. Purchasing happens outside this API, so there is no endpoint here that starts one — this reports what the backend has been told.',
+      'Read `is_active` rather than inferring from `status`: a cancelled subscription is still active until its period ends, and one in billing retry still entitles. Purchasing happens outside this API, so there is no endpoint here that starts one — this reports what the backend has been told. The one exception is the staging-only test purchase below.',
     auth: true,
     errors: [],
+  },
+  {
+    method: 'post',
+    path: '/subscriptions/test-purchase',
+    tag: 'Subscriptions',
+    summary: 'Test purchase (staging only)',
+    description:
+      'STAGING ONLY, until RevenueCat. Grants the named plan to the caller at once, with no payment taken, and answers exactly as GET /subscriptions/me does. The plan replaces any test plan the caller already holds — switching down works — and never touches a store subscription. Monthly and yearly run a calendar month or year and do not renew. Only where `purchase_mode` is `test`: everywhere else this answers the same 404 as a path that does not exist, and production refuses to start with it on. The body names a product slug and nothing else — no user, tier or price.',
+    body: testPurchaseSchema,
+    auth: true,
+    errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
+  },
+  {
+    method: 'delete',
+    path: '/subscriptions/test-purchase',
+    tag: 'Subscriptions',
+    summary: 'End the test plan (staging only)',
+    description:
+      'STAGING ONLY. Ends every test plan the caller holds, at once — unlike a store cancellation, which keeps access to the end of the period, because nothing was paid for and the point is to see the tier below. Store subscriptions are untouched. Idempotent: with nothing to end it still answers 200 with the current state. 404 wherever test purchases are off.',
+    auth: true,
+    errors: [E.NOT_FOUND],
   },
   // --- calls --------------------------------------------------------------
   {

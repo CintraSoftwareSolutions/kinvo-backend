@@ -1,11 +1,12 @@
 import {
   type BillingCycle,
-  type PaymentSource,
+  PaymentSource,
   SubscriptionStatus,
   SubscriptionTier,
   type Prisma,
   prisma,
 } from '@/db/prisma';
+import { testPurchasesEnabled } from '@config/env';
 import { emitEntitlementsUpdated } from '@/realtime/emit';
 import { logger } from '@utils/logger';
 
@@ -26,6 +27,12 @@ import { logger } from '@utils/logger';
  * With no writer in this service, the only way a tier can change is a
  * verified subscription row. An endpoint that took a tier, a price or a receipt
  * and acted on it would be the bug.
+ *
+ * ONE BOUNDED EXCEPTION, in its own file so it can be found and removed:
+ * test-purchases.service.ts grants `source = test` rows on request, for
+ * staging only, until RevenueCat exists (DECISIONS.md, 24 Sep 2026). Those rows
+ * count only while `testPurchasesEnabled()`, which a production boot refuses —
+ * checked below, where the tier is decided, not only where rows are written.
  *
  * ENTITLEMENT BELONGS TO THE USER, not a device or a store account. The tier is
  * resolved from Subscription rows keyed on user_id, so signing in anywhere
@@ -77,6 +84,10 @@ export async function resolveTier(userId: string, now = new Date()): Promise<Sub
       current_period_end: { gt: now },
       revoked_at: null,
       refunded_at: null,
+      // A test plan counts only where test purchases are switched on. Where real
+      // users pay, it unlocks nothing — even one that arrived in a database
+      // copied from staging.
+      ...(testPurchasesEnabled() ? {} : { source: { not: PaymentSource.test } }),
     },
     select: { product: { select: { tier: true } } },
   });
@@ -93,7 +104,7 @@ export async function resolveTier(userId: string, now = new Date()): Promise<Sub
  * Emits over the socket so a client sitting on the paywall updates the moment
  * its entitlement changes, rather than on next launch.
  */
-async function syncTier(userId: string): Promise<SubscriptionTier> {
+export async function syncTier(userId: string): Promise<SubscriptionTier> {
   const tier = await resolveTier(userId);
 
   const user = await prisma.user.findUnique({
@@ -149,7 +160,10 @@ function toView(subscription: SubscriptionRow, now = new Date()): SubscriptionVi
       ENTITLING_STATUSES.includes(subscription.status) &&
       subscription.current_period_end > now &&
       subscription.revoked_at === null &&
-      subscription.refunded_at === null,
+      subscription.refunded_at === null &&
+      // The same rule `resolveTier` applies, or this would call live a plan
+      // that grants nothing.
+      (subscription.source !== PaymentSource.test || testPurchasesEnabled()),
     cancelled_at: subscription.cancelled_at?.toISOString() ?? null,
     created_at: subscription.created_at.toISOString(),
   };

@@ -233,6 +233,57 @@ describe('environment validation (spec 7, Batch 0)', () => {
     ).toThrow(EnvValidationError);
   });
 
+  it('refuses test purchases wherever real users pay', () => {
+    // A switch that hands out paid plans with no payment taken must not be
+    // one typo from production. Everything else here is production-complete,
+    // so the switch is the only thing refused — and named.
+    const production: NodeJS.ProcessEnv = {
+      ...VALID,
+      ...PRODUCTION_CREDENTIALS,
+      NODE_ENV: 'production',
+    };
+
+    expect(() => parseEnv(production)).not.toThrow();
+
+    let failure: unknown;
+    try {
+      parseEnv({ ...production, TEST_PURCHASES_ENABLED: 'true' });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(EnvValidationError);
+    expect(Object.keys((failure as EnvValidationError).issues)).toEqual(['TEST_PURCHASES_ENABLED']);
+  });
+
+  it('allows test purchases where the integration waiver is on, as on staging', () => {
+    const staging: NodeJS.ProcessEnv = {
+      ...VALID,
+      NODE_ENV: 'production',
+      CORS_ORIGINS: 'https://admin.kinvo.app',
+      REQUIRE_THIRD_PARTY_INTEGRATIONS: 'false',
+      TEST_PURCHASES_ENABLED: 'true',
+    };
+
+    expect(parseEnv(staging).TEST_PURCHASES_ENABLED).toBe(true);
+  });
+
+  it('keeps test purchases off unless told exactly "true"', () => {
+    // Off by default, and a value that merely looks like yes is still off:
+    // this is the one switch where guessing the operator's meaning gives
+    // Premium away.
+    expect(parseEnv(VALID).TEST_PURCHASES_ENABLED).toBe(false);
+    expect(parseEnv({ ...VALID, TEST_PURCHASES_ENABLED: 'yes' }).TEST_PURCHASES_ENABLED).toBe(
+      false,
+    );
+    expect(parseEnv({ ...VALID, TEST_PURCHASES_ENABLED: 'TRUE' }).TEST_PURCHASES_ENABLED).toBe(
+      false,
+    );
+    expect(parseEnv({ ...VALID, TEST_PURCHASES_ENABLED: 'true' }).TEST_PURCHASES_ENABLED).toBe(
+      true,
+    );
+  });
+
   it('splits comma-separated social client IDs', () => {
     const parsed = parseEnv({
       ...VALID,

@@ -216,6 +216,11 @@ enum SubscriptionStatus {
 enum PaymentSource {
   apple
   google
+  /// Granted by the staging-only test-purchase route, never by a store
+  /// (DECISIONS.md, 24 Sep 2026). Honoured only where test purchases are
+  /// switched on, and a production boot refuses that switch — so a test row
+  /// unlocks nothing where real users pay, even in a copied database.
+  test
 
   @@map("payment_source")
 }

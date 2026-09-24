@@ -244,6 +244,21 @@ export const envSchema = z.object({
     .string()
     .default('true')
     .transform((value) => value !== 'false'),
+
+  /**
+   * Test purchases: tapping Upgrade grants the plan with no payment taken
+   * (DECISIONS.md, 24 Sep 2026). A stand-in so the paid tiers can be exercised
+   * before RevenueCat exists.
+   *
+   * Off unless set to exactly "true", and refused at boot wherever the
+   * integration waiver is off — that is, wherever real users sign in and pay.
+   * A switch that gives Premium away for free must not be one typo from
+   * production.
+   */
+  TEST_PURCHASES_ENABLED: z
+    .string()
+    .default('false')
+    .transform((value) => value === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -339,6 +354,16 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): Env {
     }
   }
 
+  if (
+    result.data.NODE_ENV === 'production' &&
+    result.data.REQUIRE_THIRD_PARTY_INTEGRATIONS &&
+    result.data.TEST_PURCHASES_ENABLED
+  ) {
+    issues.TEST_PURCHASES_ENABLED = [
+      'must be off wherever real users pay — it grants paid plans with no payment taken',
+    ];
+  }
+
   if (result.data.NODE_ENV === 'production') {
     // A wildcard origin in production lets any site call the API from a
     // browser. Harmless while the only client is a mobile app, but the admin
@@ -362,3 +387,16 @@ export const isDevelopment = env.NODE_ENV === 'development';
 export const isTest = env.NODE_ENV === 'test';
 
 export const thirdPartyIntegrationsRequired = isProduction && env.REQUIRE_THIRD_PARTY_INTEGRATIONS;
+
+/**
+ * Whether test purchases are on: the route that grants them answers, and the
+ * plans it granted count.
+ *
+ * A function rather than a constant so the suites that assert both states can
+ * flip it. Checks the waiver as well as the switch, although a boot with both
+ * is refused above — the refusal is the lock, and this is the second one, for
+ * the day somebody loosens the first.
+ */
+export function testPurchasesEnabled(): boolean {
+  return env.TEST_PURCHASES_ENABLED && !thirdPartyIntegrationsRequired;
+}

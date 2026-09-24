@@ -1751,6 +1751,65 @@ already argued in `infra/email.tf` — SES suppresses bounced and complained
 addresses at the ACCOUNT level, so nothing here needs to read those events, and
 the two reputation alarms are what actually watch the rates.
 
+### 2026-09-24 — Test purchases on staging, until RevenueCat
+
+Asked for: tapping Upgrade should give the account that plan, straight away,
+until RevenueCat is in — so Basic and Premium can be tested end to end, paywalls
+and all, on staging. Approved together with the migration and the deploy, and
+with the staging grants of 21 Sep kept rather than reset.
+
+That is exactly what §5.10 forbids for real purchases: a request that turns
+into a paid plan. So it is built as a stand-in that cannot survive contact with
+production, fenced three ways, each enough on its own:
+
+1. **The routes are absent unless switched on.** `POST` and
+   `DELETE /subscriptions/test-purchase` hand over to the same handler an
+   unknown path reaches, so where the switch is off they are indistinguishable
+   from routes that were never written — including to a signed-out probe, since
+   they sit behind `authenticate` like every other path under /subscriptions.
+2. **Production refuses to boot with the switch on.** `TEST_PURCHASES_ENABLED`
+   is honoured only where `REQUIRE_THIRD_PARTY_INTEGRATIONS` is off, which is
+   staging's waiver. Removing the waiver without removing the switch stops the
+   deploy rather than shipping free Premium. And it is off unless set to
+   exactly `true` — `yes` is still off, because on this one switch a generous
+   reading of the operator gives the product away.
+3. **A test plan only counts while the switch is on.** Test purchases write
+   `source = test`, a new value rather than a borrowed `apple`, and
+   `resolveTier` ignores those rows otherwise. A staging database restored into
+   production would unlock nothing. This is the lock that holds even if the
+   other two are loosened.
+
+How a test plan behaves, and why:
+
+- **It replaces the test plan before it**, as switching plans in a store does.
+  Stacking would make switching down impossible, because the tier is the
+  highest live plan. Store subscriptions are never touched: a tap must not be
+  able to end something somebody paid for.
+- **Cancelling ends it at once**, unlike a store cancellation, which keeps
+  access to the end of the paid period. Nothing was paid for, and the point of
+  cancelling a test plan is to see the tier below.
+- **Calendar months, clamped**, as the stores count them (`addMonths` in
+  `src/utils/calendar.ts`): 31 January plus a month is the end of February.
+  `auto_renew` is false — nothing will renew it, so it must not say it will.
+- **One purchase at a time per user**, by locking the user row. Two taps
+  racing would otherwise both end the old plan and both start a new one, and
+  the higher tier would win whichever came last.
+- **The tier is announced after the commit**, never inside it, so the app's
+  live update never describes a row a rollback removed.
+- **The catalogue says how buying works here**: `purchase_mode` is `test` or
+  `none` beside the products, so the paywall asks what is on sale and whether
+  it can be bought in one request.
+
+The staging grants of 21 Sep were `source = apple` only because the enum knew
+nothing else. They are relabelled `test` on staging after the migration —
+which cannot do it itself, because a new enum value cannot be used by the
+transaction that adds it — so "Cancel test plan" ends them like any other, and
+everyone keeps the Premium they have until they choose not to.
+
+When RevenueCat arrives, `test-purchases.service.ts`, its two routes, the
+switch and the relabelled rows are deleted, not adapted. Real purchases reach
+the server verified by the store, never from a tap.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

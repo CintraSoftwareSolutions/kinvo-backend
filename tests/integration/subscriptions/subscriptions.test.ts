@@ -115,6 +115,10 @@ describe('nothing reachable over HTTP can grant entitlement (spec §5.10)', () =
     `${SUBS}/checkout`,
     `${SUBS}/portal`,
     `${SUBS}/restore`,
+    // Staging's stand-in for payments exists only where test purchases are
+    // switched on, and they are off by default, as everywhere real users pay.
+    // test-purchases.test.ts covers both states.
+    `${SUBS}/test-purchase`,
     // No PAYMENT webhook. The namespace itself is no longer empty — the video
     // provider's status callback lives at /webhooks/video — so this asserts the
     // specific paths a payment provider would post to, rather than the whole

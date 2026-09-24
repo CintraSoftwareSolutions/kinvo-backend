@@ -1,0 +1,13 @@
+-- Test purchases (DECISIONS.md, 24 Sep 2026).
+--
+-- A subscription granted by the staging-only test-purchase route rather than
+-- by a store, so it can stand in for payments until RevenueCat arrives.
+--
+-- Its own value rather than borrowing 'apple' or 'google', which is what the
+-- hand-made staging grants of 21 Sep had to do: a row that claims to be a
+-- store purchase when it is not is a lie in the data, and "never honour a test
+-- plan where real users pay" needs a column to check, not a string prefix.
+--
+-- ADD VALUE cannot be used by the transaction that adds it, which is why the
+-- staging grants are relabelled by a separate data step, not here.
+ALTER TYPE "payment_source" ADD VALUE IF NOT EXISTS 'test';

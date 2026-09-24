@@ -89,6 +89,11 @@ MEDIA_AUTO_APPROVE_UPLOADS=false
 # honest. MUST become true the moment real users can sign in.
 REQUIRE_THIRD_PARTY_INTEGRATIONS=false
 
+# Test purchases: tapping Upgrade grants the plan with no payment taken, until
+# RevenueCat exists (DECISIONS.md, 24 Sep 2026). Refused at boot the moment the
+# waiver above is removed, so the two cannot both be forgotten.
+TEST_PURCHASES_ENABLED=true
+
 # Email through SES. No credentials: the instance role signs the calls.
 SES_SENDER_ADDRESS=${ses_sender_address}
 SES_CONFIGURATION_SET=${ses_configuration_set}
