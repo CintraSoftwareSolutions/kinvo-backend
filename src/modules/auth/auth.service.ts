@@ -139,8 +139,16 @@ export async function login(input: LoginInput): Promise<AuthTokens> {
 
 export interface PasswordResetRequest {
   code: string;
-  /** False when there is no mail transport to send it with. */
-  delivered: boolean;
+  /**
+   * Whether this deployment has nowhere to send it — no mail transport at all,
+   * as on a developer's machine and in CI. The ONLY case where the code may be
+   * handed back to whoever asked.
+   *
+   * Not "it was not delivered": a provider that refuses one recipient has not
+   * delivered it either, and handing the code back then would mean anybody
+   * could have a reset code for any address the mail server happens to dislike.
+   */
+  hasNowhereToSend: boolean;
 }
 
 /**
@@ -207,7 +215,7 @@ export async function requestPasswordReset(rawEmail: string): Promise<PasswordRe
     assertEmailTransportUsable(transport);
   }
 
-  return { code, delivered: delivery.status === 'sent' };
+  return { code, hasNowhereToSend: !transport.isConfigured };
 }
 
 export async function resetPassword(

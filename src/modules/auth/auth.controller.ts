@@ -178,16 +178,18 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
   // with no mail account all run without a transport, and without this the
   // flow cannot be exercised there at all.
   //
-  // `delivered` is false ONLY in that case now. A deployment that HAS a
-  // transport and cannot send answers SERVICE_UNAVAILABLE from the service
-  // instead of reaching here, because handing the code to whoever asked would
-  // turn a broken mailer into a password reset anybody can complete for
-  // anybody. The waiver stays as the second lock: real production refuses to
-  // boot without a transport (config/env.ts), and
-  // `thirdPartyIntegrationsRequired` is what tells production from staging —
-  // `isProduction` alone does not, because staging runs with
-  // NODE_ENV=production on purpose.
-  if (request && !thirdPartyIntegrationsRequired && !request.delivered) {
+  // The question is whether there is a transport AT ALL — not whether this
+  // message was delivered. A transport that exists and failed answers
+  // SERVICE_UNAVAILABLE from the service instead of reaching here, and one
+  // that refuses a single recipient says nothing at all: handing the code
+  // back in either case would be a password reset anybody can complete for
+  // anybody whose address the mail server happens to dislike.
+  //
+  // The waiver stays as the second lock: real production refuses to boot
+  // without a transport (config/env.ts), and `thirdPartyIntegrationsRequired`
+  // is what tells production from staging — `isProduction` alone does not,
+  // because staging runs with NODE_ENV=production on purpose.
+  if (request && !thirdPartyIntegrationsRequired && request.hasNowhereToSend) {
     payload.reset_code = request.code;
   }
 
