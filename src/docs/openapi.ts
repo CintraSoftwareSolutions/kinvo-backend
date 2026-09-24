@@ -1130,7 +1130,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Subscriptions',
     summary: 'What is on sale',
     description:
-      'The catalogue the paywall renders: Basic and Premium, monthly and yearly. Prices are integer MINOR UNITS plus a currency — never floats — and are INFORMATIONAL, because whoever takes the payment decides what is actually charged. Readable without a token, since the paywall is shown before some sign-in flows. `purchase_mode` says how a plan can be bought HERE: `test` where test purchases are switched on (staging, until RevenueCat), `none` everywhere else — show the plans, and say buying is not available yet.',
+      'The catalogue the paywall renders: Basic and Premium, monthly and yearly. Prices are integer MINOR UNITS plus a currency — never floats — and are INFORMATIONAL, because whoever takes the payment decides what is actually charged. Readable without a token, since the paywall is shown before some sign-in flows. `purchase_mode` says how a plan can be bought HERE: `test` where test purchases are switched on (staging, until RevenueCat), `none` everywhere else — show the plans, and say buying is not available yet. Each product carries `features`: what the plan adds over free, in words, written from the entitlement matrix — so a feature moved between tiers changes the paywall with no app release. Monthly and yearly of one tier list the same features.',
     auth: false,
     errors: [],
   },

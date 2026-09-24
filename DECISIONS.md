@@ -1806,6 +1806,15 @@ which cannot do it itself, because a new enum value cannot be used by the
 transaction that adds it — so "Cancel test plan" ends them like any other, and
 everyone keeps the Premium they have until they choose not to.
 
+**The paywall describes plans from the matrix, not from the app.** Each
+product in `/subscriptions/products` now carries `features`: what that tier
+adds over free, in words (`plan-features.ts`). The prototype's screen listed
+"Priority support", which no plan has, and several matrix rows are still
+provisional (decisions #2, #7, #10); a description typed into the app would be
+wrong the day one of them is answered. Only what paying ADDS is listed, and the
+table of sentences is a `Record` over the flag vocabulary, so a new flag with
+no decision about its paywall line does not compile.
+
 When RevenueCat arrives, `test-purchases.service.ts`, its two routes, the
 switch and the relabelled rows are deleted, not adapted. Real purchases reach
 the server verified by the store, never from a tap.

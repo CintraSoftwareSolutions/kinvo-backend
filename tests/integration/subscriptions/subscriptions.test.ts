@@ -96,6 +96,38 @@ describe('GET /subscriptions/products', () => {
     expect(Number.isInteger(monthly.price.amount_minor)).toBe(true);
   });
 
+  it('says what each plan adds over free, from the entitlement matrix', async () => {
+    const response = await api.get(`${SUBS}/products`);
+    const featuresOf = (slug: string): string[] =>
+      response.body.data.products.find((product: { slug: string }) => product.slug === slug)
+        .features;
+
+    expect(featuresOf('basic_monthly')).toContain('Unlimited likes');
+    expect(featuresOf('basic_monthly')).not.toContain('See who liked you');
+    expect(featuresOf('advanced_monthly')).toContain('See who liked you');
+    // Monthly and yearly are the same plan, paid differently.
+    expect(featuresOf('advanced_yearly')).toEqual(featuresOf('advanced_monthly'));
+  });
+
+  it('follows the matrix when a feature moves between tiers, with no release', async () => {
+    // Open decision #2 still decides who sees their likes. Answering it is a
+    // seed edit; the paywall must tell the truth the moment it is made.
+    const flag = await prisma.entitlementFlag.findUniqueOrThrow({
+      where: { key: 'see_who_liked_you' },
+    });
+    await prisma.tierEntitlement.update({
+      where: { tier_flag_id: { tier: SubscriptionTier.basic, flag_id: flag.id } },
+      data: { value: true },
+    });
+
+    const response = await api.get(`${SUBS}/products`);
+    const basic = response.body.data.products.find(
+      (product: { slug: string }) => product.slug === 'basic_monthly',
+    );
+
+    expect(basic.features).toContain('See who liked you');
+  });
+
   it('is readable without a token, because the paywall is shown early', async () => {
     const response = await api.get(`${SUBS}/products`);
 

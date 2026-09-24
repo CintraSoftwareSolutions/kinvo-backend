@@ -56,7 +56,11 @@ function fallbackFor(key: EntitlementKey): boolean | number {
   return FLAG_VALUE_TYPES[key] === 'boolean' ? false : 0;
 }
 
-async function loadMatrix(tier: SubscriptionTier): Promise<EntitlementMap> {
+/**
+ * Every flag one tier grants. Exported for the paywall, which describes a plan
+ * from the same rows that decide what it unlocks — never from its own copy.
+ */
+export async function loadMatrix(tier: SubscriptionTier): Promise<EntitlementMap> {
   const cached = matrixCache.get(tier);
   if (cached && cached.expires_at > Date.now()) {
     return cached.flags;

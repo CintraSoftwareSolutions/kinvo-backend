@@ -7,8 +7,10 @@ import {
   prisma,
 } from '@/db/prisma';
 import { testPurchasesEnabled } from '@config/env';
+import { loadMatrix } from '@modules/entitlements/entitlements.service';
 import { emitEntitlementsUpdated } from '@/realtime/emit';
 import { logger } from '@utils/logger';
+import { describePlan } from './plan-features';
 
 /**
  * Subscriptions (spec §5.10).
@@ -176,6 +178,12 @@ export interface ProductView {
   billing_cycle: BillingCycle;
   /** spec §4.6: integer minor units plus currency. Never floats. */
   price: { amount_minor: number; currency: string } | null;
+  /**
+   * What the plan adds over the free tier, in words, from the entitlement
+   * matrix — so a feature moved between tiers updates the paywall with no app
+   * release. See plan-features.ts.
+   */
+  features: string[];
 }
 
 /**
@@ -206,6 +214,17 @@ export async function listProducts(): Promise<ProductView[]> {
     },
   });
 
+  // One matrix per tier on sale, and the free tier's to compare against. Each
+  // is cached in process for a minute, so the paywall costs nothing extra.
+  const tiers = [...new Set(products.map((product) => product.tier))];
+  const [free, ...matrices] = await Promise.all([
+    loadMatrix(SubscriptionTier.free),
+    ...tiers.map((tier) => loadMatrix(tier)),
+  ]);
+  const featuresByTier = new Map(
+    tiers.map((tier, index) => [tier, describePlan(matrices[index]!, free!)]),
+  );
+
   return products.map((product) => {
     const price = product.price_versions[0];
 
@@ -215,6 +234,7 @@ export async function listProducts(): Promise<ProductView[]> {
       tier: product.tier,
       billing_cycle: product.billing_cycle,
       price: price ? { amount_minor: price.amount_minor, currency: price.currency } : null,
+      features: featuresByTier.get(product.tier) ?? [],
     };
   });
 }
