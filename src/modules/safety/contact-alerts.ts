@@ -45,11 +45,15 @@ export async function emailContacts(
       }
 
       try {
-        const sent = await provider.send(compose({ name, email }));
-        return { id, name, delivery: sent ? 'emailed' : 'failed' };
+        const outcome = await provider.send(compose({ name, email }));
+        return { id, name, delivery: outcome.status === 'sent' ? 'emailed' : 'failed' };
       } catch (error) {
-        // Providers report failure by returning false; this is the safety net
-        // for one that throws. The contact id, never their address (spec §4).
+        // Providers report failure in their outcome; this is the safety net for
+        // one that throws. The contact id, never their address (spec §4).
+        //
+        // Both kinds of failure read as one 'failed' here, unlike password
+        // reset: this list goes back to the person who raised the alert, who is
+        // owed the truth about their own contacts either way.
         logger.error({ err: error, contact_id: id }, 'trusted contact email failed');
         return { id, name, delivery: 'failed' };
       }

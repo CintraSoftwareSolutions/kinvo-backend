@@ -174,12 +174,19 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
     message: 'If that address has an account, a reset code is on its way.',
   };
 
-  // Nowhere to send it: local development, the test suite, and staging under
-  // the integration waiver all run without a mail transport, and without this
-  // the flow cannot be exercised there at all. Real production refuses to boot
-  // without a transport (config/env.ts), and `thirdPartyIntegrationsRequired`
-  // is what tells the two apart — `isProduction` alone does not, because
-  // staging runs with NODE_ENV=production on purpose.
+  // Nowhere to send it: local development, the test suite, and a staging box
+  // with no mail account all run without a transport, and without this the
+  // flow cannot be exercised there at all.
+  //
+  // `delivered` is false ONLY in that case now. A deployment that HAS a
+  // transport and cannot send answers SERVICE_UNAVAILABLE from the service
+  // instead of reaching here, because handing the code to whoever asked would
+  // turn a broken mailer into a password reset anybody can complete for
+  // anybody. The waiver stays as the second lock: real production refuses to
+  // boot without a transport (config/env.ts), and
+  // `thirdPartyIntegrationsRequired` is what tells production from staging —
+  // `isProduction` alone does not, because staging runs with
+  // NODE_ENV=production on purpose.
   if (request && !thirdPartyIntegrationsRequired && !request.delivered) {
     payload.reset_code = request.code;
   }

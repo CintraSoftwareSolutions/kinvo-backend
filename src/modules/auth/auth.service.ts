@@ -5,6 +5,7 @@ import { assertAdult, calculateAge } from '@utils/age';
 import { logger } from '@utils/logger';
 import type { AuthMeResponse, AuthTokens } from './auth.types';
 import { getEmailProvider } from '@modules/notifications/providers';
+import type { EmailProvider } from '@/providers/email.provider';
 import { signOutAllDevices } from '@modules/settings/devices.service';
 import { passwordResetEmail } from './auth.emails';
 import {
@@ -138,12 +139,38 @@ export async function login(input: LoginInput): Promise<AuthTokens> {
 
 export interface PasswordResetRequest {
   code: string;
-  /** False when no mail transport is configured, or the provider rejected it. */
+  /** False when there is no mail transport to send it with. */
   delivered: boolean;
+}
+
+/**
+ * Refuses while the mail transport is known to be down.
+ *
+ * Only where a transport is configured at all: local development, CI, and a
+ * staging box with no mail account run on the no-op provider, where the code
+ * comes back in the response instead so the flow stays exercisable. A
+ * deployment that HAS a transport gets the honest answer, staging included —
+ * handing the code to the caller because email is broken would turn a password
+ * reset into one anybody can complete for anybody.
+ */
+function assertEmailTransportUsable(transport: EmailProvider): void {
+  if (transport.isConfigured && !transport.isReady) {
+    throw new ApiError(
+      ERROR_CODES.SERVICE_UNAVAILABLE,
+      'We cannot send email at the moment. Please try again shortly.',
+    );
+  }
 }
 
 export async function requestPasswordReset(rawEmail: string): Promise<PasswordResetRequest | null> {
   const email = normaliseEmail(rawEmail);
+  const transport = getEmailProvider();
+
+  // Checked BEFORE the address is looked up, and so before anything here knows
+  // whether it belongs to an account. An outage reported only to addresses that
+  // exist is an enumeration oracle wearing a 503, and refusing that question is
+  // the whole point of this endpoint.
+  assertEmailTransportUsable(transport);
 
   const identity = await prisma.authIdentity.findUnique({
     where: { provider_identifier: { provider: 'email', identifier: email } },
@@ -157,14 +184,30 @@ export async function requestPasswordReset(rawEmail: string): Promise<PasswordRe
 
   const { code } = await createPasswordResetCode(identity.user.id);
 
-  // Delivery, never the record. The provider logs and swallows its own
-  // failures, and a rejected email must not fail the request: the code is
-  // already issued, and the user can ask for another.
-  const delivered = await getEmailProvider().send(passwordResetEmail(email, code));
+  const delivery = await transport.send(passwordResetEmail(email, code));
 
-  logger.info({ user_id: identity.user.id, delivered }, 'password reset code issued');
+  logger.info(
+    { user_id: identity.user.id, delivery: delivery.status },
+    'password reset code issued',
+  );
 
-  return { code, delivered };
+  // A refused RECIPIENT is never reported — whether an address can receive mail
+  // is a fact about the address, and this endpoint answers nothing about
+  // addresses. A refused TRANSPORT is reported, because it is a fact about us,
+  // and "a reset code is on its way" when the transport just refused it is how
+  // staging spent its first weeks sending people to an inbox nothing had been
+  // sent to.
+  //
+  // This message is the one that discovered the outage, so the check above
+  // could not have caught it, and for this single request the refusal does
+  // depend on an account existing. It closes behind itself: the failure is now
+  // recorded, so every request after it — registered or not — is refused the
+  // same way until the transport recovers.
+  if (delivery.status === 'unavailable') {
+    assertEmailTransportUsable(transport);
+  }
+
+  return { code, delivered: delivery.status === 'sent' };
 }
 
 export async function resetPassword(

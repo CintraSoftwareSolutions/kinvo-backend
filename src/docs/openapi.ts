@@ -150,10 +150,10 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Auth',
     summary: 'Request a password reset code',
     description:
-      'Emails a six-digit code, single use, valid for an hour. Requesting a new code retires the previous one. The response is identical whether or not the address is registered, so it cannot be used to find out which addresses have accounts. An environment with no mail transport — local, test, and staging under the integration waiver — returns the code as reset_code instead, so the flow stays testable there; production refuses to boot without a transport, so it never does.',
+      'Emails a six-digit code, single use, valid for an hour. Requesting a new code retires the previous one. The response is identical whether or not the address is registered, so it cannot be used to find out which addresses have accounts. SERVICE_UNAVAILABLE means the mail transport is down and no code was sent — the app should say so rather than send the user to an inbox; it is returned for every address alike, registered or not. An environment with NO transport at all — local and test — returns the code as reset_code instead, so the flow stays testable there; production refuses to boot without a transport, so it never does.',
     body: authSchema.forgotPasswordSchema,
     auth: false,
-    errors: [E.VALIDATION_FAILED, E.RATE_LIMITED],
+    errors: [E.VALIDATION_FAILED, E.RATE_LIMITED, E.SERVICE_UNAVAILABLE],
   },
   {
     method: 'post',

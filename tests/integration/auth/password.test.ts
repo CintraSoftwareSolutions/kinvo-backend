@@ -85,6 +85,79 @@ describe('POST /auth/forgot-password', () => {
     expect(response.body.data.reset_code).toMatch(/^\d{6}$/);
   });
 
+  it('refuses when the mail transport is down, the same way for every address', async () => {
+    // A transport an earlier request already found broken, which is the state
+    // every request after the first one meets.
+    const mailer = RecordingEmailProvider.unavailable().markDown();
+    setEmailProvider(mailer);
+    const { email } = await createAuthenticatedUser();
+
+    const known = await api.post(`${AUTH_BASE}/forgot-password`).send({ email });
+    const unknown = await api.post(`${AUTH_BASE}/forgot-password`).send({ email: uniqueEmail() });
+
+    // Honest, because the failure is ours and has nothing to do with the
+    // address: telling someone a code is on its way when none was sent leaves
+    // them refreshing an inbox for ever.
+    expect(known.status).toBe(503);
+    expectErrorEnvelope(known.body, 'SERVICE_UNAVAILABLE');
+    expect(known.body).toEqual(unknown.body);
+
+    // Decided before the address was looked up. Were it decided after, this
+    // error would appear only for addresses that have accounts, and the
+    // endpoint would answer by its status code the question it refuses to
+    // answer in its body.
+    expect(mailer.sent).toHaveLength(0);
+    expect(await prisma.passwordResetToken.count()).toBe(0);
+  });
+
+  it('refuses the request that discovers the transport is down', async () => {
+    // Healthy until it is used: this request is the one that finds out.
+    const mailer = RecordingEmailProvider.unavailable();
+    setEmailProvider(mailer);
+    const { email } = await createAuthenticatedUser();
+
+    const response = await api.post(`${AUTH_BASE}/forgot-password`).send({ email });
+
+    expect(response.status).toBe(503);
+    expect(mailer.sent).toHaveLength(1);
+    // Never as a consolation prize. A code handed to whoever asked is a
+    // password reset anybody can complete for anybody.
+    expect(JSON.stringify(response.body)).not.toContain('reset_code');
+  });
+
+  it('says nothing when the provider refuses that one address', async () => {
+    // What the SES sandbox answers for an address nobody has verified. It is a
+    // fact about the address, and this endpoint answers no questions about
+    // addresses — so it reads exactly like success.
+    const mailer = RecordingEmailProvider.rejecting();
+    setEmailProvider(mailer);
+    const { email } = await createAuthenticatedUser();
+
+    const known = await api.post(`${AUTH_BASE}/forgot-password`).send({ email });
+    const unknown = await api.post(`${AUTH_BASE}/forgot-password`).send({ email: uniqueEmail() });
+
+    expect(known.status).toBe(200);
+    expect(known.body).toEqual(unknown.body);
+    expect(known.body.data).not.toHaveProperty('reset_code');
+  });
+
+  it('recovers on its own once the transport works again', async () => {
+    const { email } = await createAuthenticatedUser();
+
+    setEmailProvider(RecordingEmailProvider.unavailable().markDown());
+    const refused = await api.post(`${AUTH_BASE}/forgot-password`).send({ email });
+
+    // A transport that has been fixed must not leave the endpoint refusing
+    // until somebody notices and restarts something.
+    const working = new RecordingEmailProvider();
+    setEmailProvider(working);
+    const accepted = await api.post(`${AUTH_BASE}/forgot-password`).send({ email });
+
+    expect(refused.status).toBe(503);
+    expect(accepted.status).toBe(200);
+    expect(working.to(email)).toHaveLength(1);
+  });
+
   it('creates a single-use code with a one-hour expiry', async () => {
     const { email, user_id: userId } = await createAuthenticatedUser();
     await requestCode(email);

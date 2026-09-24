@@ -670,7 +670,7 @@ describe('emergency', () => {
   });
 
   it('never counts an email that did not send', async () => {
-    setEmailProvider(new RecordingEmailProvider(false));
+    setEmailProvider(RecordingEmailProvider.rejecting());
     const user = await withContacts([{ name: 'Sister', email: 'sister@example.com' }]);
 
     const response = await api.post(`${SAFETY}/emergency`).set(authHeader(user.tokens)).send({});

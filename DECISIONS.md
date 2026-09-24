@@ -1662,6 +1662,81 @@ The app sends the token from the moment the message is queued and keeps it
 through every retry — the whole point is that the second attempt is not a new
 message.
 
+### 2026-09-24 — Password reset email: it never arrived, and the API said it had
+
+Every password reset code sent from staging was refused by SES, and the API
+answered "a reset code is on its way" every time. Three faults, stacked, and the
+third is what hid the first two.
+
+**1. The IAM policy denied every send.** `kinvo-staging-ses` allowed
+`ses:SendEmail` on `identity/cintrasoftwaresolutions@gmail.com` — the sender —
+which is the obvious way to write it. While an account is in the SES SANDBOX,
+though, SES authorises against the RECIPIENT identity as well, so every send to
+anybody else came back `AccessDeniedException` naming the recipient. Nothing in
+that error mentions the sandbox rule that causes it.
+
+The policy now allows `identity/*` and pins the sender with a `ses:FromAddress`
+condition instead. The role still cannot send AS anything but the Kinvo
+address — the property worth keeping — and the grant survives production access
+being granted, when the recipient check disappears.
+
+**2. The account is in the sandbox.** 200 messages a day, one a second, and
+delivery only to verified identities. Test addresses have to be verified one at
+a time until production access is granted, and that request needs business
+details AWS asks for: it is the product owner's to file, not something to
+invent.
+
+**3. The API reported success regardless — the real bug.** `send` returned a
+boolean, so "the transport is down" and "that address bounces" were the same
+`false`, and `forgotPassword` treated both as nothing worth mentioning. For
+notifications that is right: the feed is the record and the email a courtesy.
+Password reset has no feed entry behind it. The email IS the product, and
+silence sends somebody to refresh an inbox nothing was ever sent to.
+
+`EmailProvider.send` now answers with an outcome — `sent`, `rejected` (this
+recipient) or `unavailable` (the transport). Password reset answers
+`503 SERVICE_UNAVAILABLE` to the third and stays silent about the second,
+because whether an address can receive mail is a fact about the address, and
+this endpoint exists to refuse questions about addresses.
+
+- **The refusal is decided BEFORE the address is looked up.** An outage
+  reported only for addresses that have accounts is an enumeration oracle
+  wearing a 503. Deciding it that early means knowing the transport is down
+  without sending anything, which is what `TransportHealth` is for: the last
+  outcome, remembered for a minute. The request that DISCOVERS an outage is
+  refused too, and it is the only one whose answer depends on an account
+  existing — by the time it answers, the failure is recorded and every request
+  behind it is refused identically.
+- **It forgets after a minute.** Nothing probes SES, so the next request
+  through is the probe. A transport that has been fixed must not leave the
+  endpoint refusing until somebody notices and restarts something.
+- **The classification leans one way on purpose.** Anything unrecognised counts
+  as the transport. Mistaking an outage for a bounce costs one silent email —
+  today's bug. Mistaking one undeliverable address for an outage makes
+  everybody else's reset answer 503, so `MessageRejected` and
+  `BadRequestException` are named explicitly and nothing else joins them.
+- **`reset_code` in the response body is now reachable only where there is no
+  transport at all** — local and test. A deployment that HAS one and cannot use
+  it refuses instead of handing the code to whoever asked; on an
+  internet-facing staging box that was a password reset anybody could complete
+  for anybody.
+- Trusted-contact alerts still report both failures as one `failed`. That list
+  goes back to the person who raised the alert, who is owed the truth about
+  their own contacts either way.
+
+Tested where it broke: `classifySesFailure` and `TransportHealth` have unit
+tests, because every branch needs SES in a state that is hard or expensive to
+reach and the one that shipped broken was unreachable from the integration
+suite entirely. The endpoint's own tests cover the refusal being identical for
+a registered and an unregistered address, the request that discovers the
+outage, a refused recipient reading exactly like success, and recovery once the
+transport works again.
+
+Still outstanding, and neither is code: production access, and the
+bounce/complaint topic `kinvo-staging-email-events`, which has no subscribers —
+the events are published and nothing reads them. The account-level suppression
+list is what protects the sending reputation today.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started
