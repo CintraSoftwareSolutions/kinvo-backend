@@ -1724,6 +1724,19 @@ this endpoint exists to refuse questions about addresses.
   goes back to the person who raised the alert, who is owed the truth about
   their own contacts either way.
 
+**Found while checking the fix: the logs held the code.** Both providers handed
+the raw error and the subject to the logger. The logger redacts KEYS, not text
+inside a string, so every refused reset logged the recipient's address — SES
+writes it into the error message, and the stack repeats it — and the subject,
+which for a password reset is the code itself. Anybody able to read the logs
+could have reset that account within the hour. A failed send now logs the
+provider, the error's name, the HTTP status and the AWS request id: what a
+failure is chased with, and nothing about whom it was for. The tests use the
+error text SES actually returned, and one was checked by putting the old
+logging back and watching it fail. The lines already written live only in the
+api container's own log — nothing ships them anywhere — and the codes in them
+had expired within the hour.
+
 Tested where it broke: `classifySesFailure` and `TransportHealth` have unit
 tests, because every branch needs SES in a state that is hard or expensive to
 reach and the one that shipped broken was unreachable from the integration

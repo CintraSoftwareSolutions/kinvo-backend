@@ -7,6 +7,7 @@ import {
   emailUnavailable,
   TransportHealth,
   type EmailDelivery,
+  type EmailFailure,
   type EmailMessage,
   type EmailProvider,
 } from './email.provider';
@@ -71,7 +72,7 @@ const RECIPIENT_FAILURES = new Set(['MessageRejected', 'BadRequestException']);
  * needs SES to be in a state that is either hard or expensive to reach, and the
  * one that shipped broken was unreachable from the test suite entirely.
  */
-export function classifySesFailure(error: unknown): EmailDelivery {
+export function classifySesFailure(error: unknown): EmailFailure {
   // Optional chaining, not a cast alone: a rejection with no value at all
   // would otherwise throw from inside the catch block that exists to stop
   // exactly that, and escape `send` as a 500 on somebody's password reset.
@@ -86,6 +87,34 @@ export function classifySesFailure(error: unknown): EmailDelivery {
   // is an outage worth admitting to, and one that does not repeat is forgotten
   // within the minute.
   return emailUnavailable(name);
+}
+
+/**
+ * The parts of a failed send that are safe to log — which is not the error.
+ *
+ * SES writes the RECIPIENT'S ADDRESS into the message of AccessDeniedException
+ * and MessageRejected alike, and the stack repeats that message as its first
+ * line, so handing the error to the logger put an email address in the logs on
+ * every failure: redaction works on keys, not on text inside a string. The
+ * subject stays out for a worse reason. For a password reset the subject IS the
+ * code, and a code in the logs is a way into that account, for the next hour,
+ * for anybody who can read them. Staging logged both on every refused reset
+ * until 24 Sep 2026.
+ *
+ * What is kept is what a failure is chased with: the name this code branches
+ * on, and the request id AWS support asks for.
+ */
+function describeSesFailure(error: unknown, reason: string): Record<string, unknown> {
+  const metadata = (
+    error as { $metadata?: { httpStatusCode?: number; requestId?: string } } | null | undefined
+  )?.$metadata;
+
+  return {
+    provider: 'ses',
+    reason,
+    http_status: metadata?.httpStatusCode ?? null,
+    aws_request_id: metadata?.requestId ?? null,
+  };
 }
 
 export class SesEmailProvider implements EmailProvider {
@@ -131,20 +160,16 @@ export class SesEmailProvider implements EmailProvider {
       this.health.recordSent();
       return EMAIL_SENT;
     } catch (error) {
-      // The recipient is deliberately not logged (spec §4: no PII in logs), and
-      // SES puts it in the message of an AccessDeniedException — so the reason
-      // is logged as a name, and the SDK error only as `err`, which the logger
-      // redacts.
       const delivery = classifySesFailure(error);
+      const details = describeSesFailure(error, delivery.reason);
 
       if (delivery.status === 'unavailable') {
         this.health.recordUnavailable();
-        logger.error(
-          { err: error, subject: message.subject, provider: this.name, reason: delivery.reason },
-          'email transport unavailable',
-        );
+        // Distinct from the line below, so an alarm can match an outage and not
+        // a bounce.
+        logger.error(details, 'email transport unavailable');
       } else {
-        logger.warn({ err: error, subject: message.subject }, 'email refused for that recipient');
+        logger.warn(details, 'email refused for that recipient');
       }
 
       return delivery;

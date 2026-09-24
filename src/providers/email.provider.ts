@@ -36,18 +36,20 @@ export interface EmailMessage {
  *   policy, a paused account, the daily cap, a timeout. Nothing to do with the
  *   recipient, so it is safe to report and dishonest to hide.
  */
-export type EmailDelivery =
-  | { readonly status: 'sent' }
+export type EmailDelivery = { readonly status: 'sent' } | EmailFailure;
+
+/** A message that did not go, and why — the two outcomes that carry a reason. */
+export type EmailFailure =
   | { readonly status: 'rejected'; readonly reason: string }
   | { readonly status: 'unavailable'; readonly reason: string };
 
 export const EMAIL_SENT: EmailDelivery = { status: 'sent' };
 
-export function emailRejected(reason: string): EmailDelivery {
+export function emailRejected(reason: string): EmailFailure {
   return { status: 'rejected', reason };
 }
 
-export function emailUnavailable(reason: string): EmailDelivery {
+export function emailUnavailable(reason: string): EmailFailure {
   return { status: 'unavailable', reason };
 }
 
@@ -111,10 +113,11 @@ export class NoopEmailProvider implements EmailProvider {
   // `isConfigured` first, so this never reads as an outage.
   readonly isReady = false;
 
-  send(message: EmailMessage): Promise<EmailDelivery> {
-    // The recipient is deliberately not logged. Spec §4 forbids PII in logs,
-    // and an email address is the most linkable identifier this system holds.
-    logger.debug({ subject: message.subject }, 'email skipped — no provider configured');
+  send(): Promise<EmailDelivery> {
+    // Neither the recipient nor the subject. Spec §4 forbids PII in logs, and
+    // an email address is the most linkable identifier this system holds; for
+    // a password reset, the subject is the code itself.
+    logger.debug('email skipped — no provider configured');
     return Promise.resolve(emailUnavailable('no email provider configured'));
   }
 }
@@ -136,6 +139,23 @@ export interface SmtpConfig {
  * being unusable, which is ours to admit to.
  */
 const SMTP_RECIPIENT_FAILURES = new Set(['EENVELOPE', 'EMESSAGE']);
+
+/**
+ * The parts of a failed SMTP send that are safe to log. Not the error: a
+ * refused RCPT carries the recipient's address in its message and again in the
+ * server's response text. Not the subject either — for a password reset it is
+ * the code. `describeSesFailure` has the longer version of the same rule.
+ */
+function describeSmtpFailure(error: unknown, reason: string): Record<string, unknown> {
+  const failure = error as { responseCode?: number; command?: string } | null | undefined;
+
+  return {
+    provider: 'smtp',
+    reason,
+    smtp_response_code: failure?.responseCode ?? null,
+    smtp_command: failure?.command ?? null,
+  };
+}
 
 export class SmtpEmailProvider implements EmailProvider {
   readonly name = 'smtp';
@@ -176,19 +196,17 @@ export class SmtpEmailProvider implements EmailProvider {
       return EMAIL_SENT;
     } catch (error) {
       const code = (error as { code?: string } | null | undefined)?.code ?? 'unknown';
+      const details = describeSmtpFailure(error, code);
 
       if (SMTP_RECIPIENT_FAILURES.has(code)) {
-        logger.warn({ err: error, subject: message.subject }, 'email refused for that recipient');
+        logger.warn(details, 'email refused for that recipient');
         return emailRejected(code);
       }
 
-      // Distinct from the line above so an alert can match the outage and not
-      // the bounce. The recipient is never logged either way.
+      // Distinct from the line above, so an alarm can match an outage and not
+      // a bounce.
       this.health.recordUnavailable();
-      logger.error(
-        { err: error, subject: message.subject, provider: this.name, reason: code },
-        'email transport unavailable',
-      );
+      logger.error(details, 'email transport unavailable');
       return emailUnavailable(code);
     }
   }
