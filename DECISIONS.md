@@ -1819,6 +1819,54 @@ When RevenueCat arrives, `test-purchases.service.ts`, its two routes, the
 switch and the relabelled rows are deleted, not adapted. Real purchases reach
 the server verified by the store, never from a tap.
 
+### 2026-09-24 — The three privacy switches, applied
+
+`incognito`, `global_verified_only` and `pause_new_matches` have been stored
+since 18 Sep and applied by nothing; the app did not offer them. They now do
+what they say. The spec's line is only "control who can view profile" (§2.3),
+so the two behaviours with more than one sensible reading were put to the
+product owner, who chose:
+
+- **Incognito: only people you have liked see you.** Not "hidden from everyone
+  but existing matches", which the schema comment had said: under that
+  reading an incognito account's likes are invisible, nobody can ever like it
+  back, and incognito becomes a way to stop matching that calls itself
+  something else. This is the meaning Tinder, Bumble and OkCupid give the
+  word, and it lets an incognito account match — with the people it chose
+  first.
+- **Pause new matches: stay visible, no new match.** Not a second "take a
+  break", which already hides someone from decks and keeps their chats.
+
+How each holds:
+
+- **Incognito** is `incognitoFilter` inside `deckCandidateFilter`, so it
+  applies at every deck build AND every read — turning it on removes someone
+  from decks already built today, at once. It is per mode, like everything in
+  discovery: a like in dating reveals nobody to a study-buddy deck.
+  `assertIncognitoAllows` guards the other two ways to reach a person: their
+  profile (any match, even one that ended, or a like in any mode, lets it
+  open) and a direct swipe (a like in that mode). Both refuse with the same
+  404 a user who never existed gets. It reads the settings table with a join,
+  which snooze deliberately never does — the shared clause runs everywhere,
+  this runs only over a day's candidate pool or a page of cards, through
+  unique indexes.
+- **Pause** refuses the paused person's likes with a new code,
+  `NEW_MATCHES_PAUSED` (409), before any quota is spent; passes still work.
+  `createMatchIfMutual` — where every match is made — makes none while either
+  side is paused, so a like that completes a pair is recorded and waits. A
+  swipe is unique per pair and mode, so neither could ever swipe again:
+  `matchLikesHeldByPause` makes those matches when the pause ends, and
+  announces them to both. Never for a pair that has had a match, even one
+  since ended — unmatching was a decision and unpausing is not a way around
+  it — nor across a block, nor in a mode either side has turned off. A pair
+  where both paused waits for the second to come back.
+- **Verified people only everywhere** is OR'd with each mode's own
+  `verified_only` when a deck is built, and changing it discards today's
+  decks in every mode, as changing one mode's filters does for that mode.
+
+The new error code is added, not renamed, per the table's own rule. The app
+offers "Resume" on it rather than a generic failure.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

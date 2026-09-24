@@ -2,7 +2,12 @@ import { type MatchModel, type Mode, Prisma, SwipeAction, prisma } from '@/db/pr
 import { ENTITLEMENT_KEYS } from '@modules/entitlements/entitlements.types';
 import { requireFeature } from '@modules/entitlements/entitlements.service';
 import { consumeQuota, refundQuota } from '@modules/entitlements/quota.service';
-import { createMatchIfMutual, deleteMatchForPair } from '@modules/matches/match.service';
+import {
+  LIKE_ACTIONS,
+  createMatchIfMutual,
+  deleteMatchForPair,
+  orderPair,
+} from '@modules/matches/match.service';
 import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
 import { assertVisible, getBlockedUserIds, visibleUserFilter } from '@modules/safety/block.service';
 import { ApiError } from '@utils/api-error';
@@ -13,6 +18,7 @@ import { logger } from '@utils/logger';
 import { emitMatch } from '@/realtime/emit';
 import { notify } from '@modules/notifications/notifications.service';
 import { consumeDeckEntry, requireEnabledMode, restoreDeckEntry } from './deck.service';
+import { assertIncognitoAllows } from './incognito';
 
 /**
  * Swiping, rewind, and the likes-you inbox (spec §5.3, Batch 7).
@@ -55,6 +61,9 @@ async function assertSwipeableTarget(actorId: string, targetId: string, mode: Mo
 
   // The shared clause first: blocks beat everything (spec §5.5).
   await assertVisible(actorId, targetId);
+  // Someone incognito can't be acted on by people they haven't shown themselves
+  // to — the card was never on their deck — and the answer is the same 404.
+  await assertIncognitoAllows(actorId, targetId, { mode });
 
   const target = await prisma.user.findFirst({
     where: {
@@ -70,6 +79,24 @@ async function assertSwipeableTarget(actorId: string, targetId: string, mode: Mo
   }
 }
 
+/**
+ * Refuses a like from someone who has paused new matches (DECISIONS.md, 24
+ * Sep 2026). Stopping new matches is the whole of what they asked for, and a
+ * like is how one starts. Passing is still allowed: it starts nothing.
+ *
+ * Before the quota is touched, so a refused like costs nothing.
+ */
+async function assertTakingNewMatches(userId: string): Promise<void> {
+  const settings = await prisma.userSettings.findUnique({
+    where: { user_id: userId },
+    select: { pause_new_matches: true },
+  });
+
+  if (settings?.pause_new_matches) {
+    throw new ApiError(ERROR_CODES.NEW_MATCHES_PAUSED);
+  }
+}
+
 export async function swipe(
   actorId: string,
   mode: Mode,
@@ -77,9 +104,13 @@ export async function swipe(
   action: SwipeAction,
 ): Promise<SwipeResult> {
   await requireEnabledMode(actorId, mode);
-  await assertSwipeableTarget(actorId, targetId, mode);
 
   const costsQuota = QUOTA_ACTIONS.includes(action);
+  if (costsQuota) {
+    await assertTakingNewMatches(actorId);
+  }
+
+  await assertSwipeableTarget(actorId, targetId, mode);
 
   // Consumed BEFORE the transaction because Redis and Postgres cannot commit
   // together, and refunded below if the write fails. The alternative — writing
@@ -353,6 +384,93 @@ async function announceMatch(match: MatchModel, actorId: string, targetId: strin
       },
     });
   }
+}
+
+/**
+ * Makes the matches a pause held back (DECISIONS.md, 24 Sep 2026).
+ *
+ * While either person has paused new matches, a like that would have
+ * completed a match is recorded and makes nothing — `createMatchIfMutual`
+ * refuses. Neither can swipe on the other again (a swipe is unique per pair
+ * and mode), so without this the pair would be stranded for good. Called when
+ * [userId]'s pause ends: every pair that liked each other in the same mode,
+ * has never had a match, can still see each other and still has the mode on,
+ * becomes a match now — and both hear about it as they would have then.
+ *
+ * A pair whose other half is still paused stays waiting; their own unpause
+ * makes it.
+ */
+export async function matchLikesHeldByPause(userId: string): Promise<number> {
+  const [given, received] = await Promise.all([
+    prisma.swipe.findMany({
+      where: { actor_id: userId, action: { in: LIKE_ACTIONS } },
+      select: { target_id: true, mode: true, action: true },
+    }),
+    prisma.swipe.findMany({
+      where: { target_id: userId, action: { in: LIKE_ACTIONS } },
+      select: { actor_id: true, mode: true },
+    }),
+  ]);
+
+  const likedBack = new Set(received.map((swipe) => `${swipe.actor_id}:${swipe.mode}`));
+  const mutual = given.filter((swipe) => likedBack.has(`${swipe.target_id}:${swipe.mode}`));
+  if (mutual.length === 0) return 0;
+
+  // Only people still in reach — the shared clause decides that, with snoozed
+  // people kept, as they are for existing matches — in modes both still have on.
+  const blockedUserIds = await getBlockedUserIds(userId);
+  const [reachable, own] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        AND: [
+          visibleUserFilter(userId, blockedUserIds, { includeSnoozed: true }),
+          { id: { in: [...new Set(mutual.map((swipe) => swipe.target_id))] } },
+        ],
+      },
+      select: { id: true, user_modes: { where: { is_enabled: true }, select: { mode: true } } },
+    }),
+    prisma.userMode.findMany({
+      where: { user_id: userId, is_enabled: true },
+      select: { mode: true },
+    }),
+  ]);
+  const ownModes = new Set(own.map((row) => row.mode));
+  const theirModes = new Map(
+    reachable.map((user) => [user.id, new Set(user.user_modes.map((row) => row.mode))]),
+  );
+
+  let made = 0;
+  for (const { target_id: otherId, mode, action } of mutual) {
+    if (!ownModes.has(mode) || !theirModes.get(otherId)?.has(mode)) continue;
+
+    const match = await prisma.$transaction(async (tx) => {
+      // A pair that has had a match — even one that has since ended — is never
+      // matched again by this. Unmatching is a decision; this is not a path
+      // around it.
+      const [userAId, userBId] = orderPair(userId, otherId);
+      const existing = await tx.match.findUnique({
+        where: { user_a_id_user_b_id_mode: { user_a_id: userAId, user_b_id: userBId, mode } },
+        select: { id: true },
+      });
+      if (existing) return null;
+
+      return createMatchIfMutual(tx, {
+        actorId: userId,
+        targetId: otherId,
+        mode,
+        isSuperLike: action === SwipeAction.super_like,
+      });
+    });
+
+    // Null when the other side is paused too: their unpause will make it.
+    if (!match) continue;
+
+    await announceMatch(match, userId, otherId);
+    made++;
+  }
+
+  logger.info({ user_id: userId, matches: made }, 'matches held by a pause made');
+  return made;
 }
 
 /**

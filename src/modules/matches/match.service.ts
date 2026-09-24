@@ -31,7 +31,7 @@ export function matchExpiryFrom(now: Date = new Date()): Date {
   return new Date(now.getTime() + DISCOVERY.MATCH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 }
 
-const LIKE_ACTIONS: SwipeAction[] = [SwipeAction.like, SwipeAction.super_like];
+export const LIKE_ACTIONS: SwipeAction[] = [SwipeAction.like, SwipeAction.super_like];
 
 /**
  * Creates a match when the target has already liked the actor IN THE SAME MODE.
@@ -72,6 +72,17 @@ export async function createMatchIfMutual(
   // raising a constraint violation the user would see as a failed swipe.
   if (existing) {
     return existing;
+  }
+
+  // Either side has paused new matches (DECISIONS.md, 24 Sep 2026). The like
+  // stands and the pair waits: `matchLikesHeldByPause` makes the match the
+  // moment the pause ends. Checked here, where every match is made, so no
+  // path to a match can forget it.
+  const paused = await tx.userSettings.count({
+    where: { user_id: { in: [actorId, targetId] }, pause_new_matches: true },
+  });
+  if (paused > 0) {
+    return null;
   }
 
   const match = await tx.match.create({

@@ -236,6 +236,9 @@ Return `404`, not `403`, when a block is the reason; a 403 confirms the resource
 - The radius query cannot compose `visibleUserFilter`, so it takes an exclusion array and the shared clause runs on its result in Prisma. `CANDIDATE_POOL` stays far above `DECK_SIZE` so the split cannot truncate a correct answer.
 - Already-swiped is scoped **per mode**. A pass in `dating` must not remove someone from the `study_buddy` deck.
 - A pass costs no quota; only likes and super likes do. One constant in `swipe.service.ts`.
+- **Incognito** shows someone only to people they have liked in that mode, and to their matches (DECISIONS.md, 24 Sep 2026). `incognitoFilter` lives in `deckCandidateFilter`, so it holds on every build and read; `assertIncognitoAllows` guards the profile and a direct swipe with the same 404 as a missing user. Never re-implement either.
+- **Pause new matches** refuses the paused person's likes (`NEW_MATCHES_PAUSED`, before quota), and `createMatchIfMutual` makes no match while either side is paused. `matchLikesHeldByPause` makes the held matches when the pause ends — never for a pair that has had a match, and never across a block.
+- **Verified people only everywhere** (`global_verified_only`) is OR'd with each mode's `verified_only` at build time; changing it discards today's decks in every mode.
 
 **Chat (spec §5.4).** A conversation belongs to exactly one match, inherits its mode, and has exactly two participants (decision #11). It is created inside the match transaction — there is no endpoint that makes one, because users cannot message before matching (decision #5).
 

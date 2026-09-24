@@ -1,5 +1,7 @@
 import { prisma } from '@/db/prisma';
 import { broadcastActivityVisibility } from '@/realtime/emit';
+import { discardTodaysDecks } from '@modules/discovery/deck.service';
+import { matchLikesHeldByPause } from '@modules/discovery/swipe.service';
 import { ApiError } from '@utils/api-error';
 import { logger } from '@utils/logger';
 
@@ -123,6 +125,22 @@ export async function updateSettings(
   // open only hears about it through the socket.
   if (input.show_last_active !== undefined && input.show_last_active !== before.show_last_active) {
     await broadcastActivityVisibility(userId, input.show_last_active);
+  }
+
+  // A different verified-only rule is a different set of people in every
+  // mode, so today's decks are rebuilt from scratch on the next read — the
+  // same as changing one mode's filters does for that mode.
+  if (
+    input.global_verified_only !== undefined &&
+    input.global_verified_only !== before.global_verified_only
+  ) {
+    await discardTodaysDecks(userId);
+  }
+
+  // Likes that became mutual while new matches were paused turn into the
+  // matches they would have been.
+  if (input.pause_new_matches === false && before.pause_new_matches) {
+    await matchLikesHeldByPause(userId);
   }
 
   return getSettings(userId);

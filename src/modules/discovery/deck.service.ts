@@ -3,6 +3,7 @@ import { type Mode, type Prisma, type UserModeModel, prisma } from '@/db/prisma'
 import { findProfilesWithinRadius, getProfileCoordinates } from '@/db/geo';
 import { type PublicPhotoView, getApprovedPhotosForMany } from '@modules/media/photos.service';
 import { getBlockedUserIds, visibleUserFilter } from '@modules/safety/block.service';
+import { incognitoFilter } from './incognito';
 import { ApiError } from '@utils/api-error';
 import { dateOfBirthRangeForAges } from '@utils/age';
 import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/compact';
@@ -132,6 +133,10 @@ export function deckCandidateFilter(
       // signups have no date of birth until onboarding runs the 18+ check, and
       // an un-onboarded account must never reach a deck.
       { onboarded_at: { not: null } },
+      // Incognito: shown only to people they have liked in this mode. Here, so
+      // it holds on every read as well as every build — turning it on hides
+      // someone from decks already built today, at once.
+      incognitoFilter(viewerId, mode),
     ],
   };
 }
@@ -207,9 +212,15 @@ export async function generateDeck(userId: string, mode: Mode, now: Date = new D
     ],
   };
 
-  if (userMode.verified_only) {
-    // The user's own hard filter — distinct from verified users ranking higher,
-    // which applies to everyone's deck (spec §5.3).
+  const settings = await prisma.userSettings.findUnique({
+    where: { user_id: userId },
+    select: { global_verified_only: true },
+  });
+
+  // The user's own hard filter — distinct from verified users ranking higher,
+  // which applies to everyone's deck (spec §5.3). Per mode, or in every mode at
+  // once with the global setting on top.
+  if (userMode.verified_only || settings?.global_verified_only) {
     (where.AND as Prisma.UserWhereInput[]).push({ is_verified: true });
   }
 
@@ -430,6 +441,16 @@ export async function discardTodaysDeck(
   // Entries cascade with the deck row.
   await prisma.deck.deleteMany({
     where: { user_id: userId, mode, deck_date: deckDateFor(now) },
+  });
+}
+
+/**
+ * Every deck the user has today, in every mode — for a change that decides
+ * who is in all of them at once, such as verified people only everywhere.
+ */
+export async function discardTodaysDecks(userId: string, now: Date = new Date()): Promise<void> {
+  await prisma.deck.deleteMany({
+    where: { user_id: userId, deck_date: deckDateFor(now) },
   });
 }
 

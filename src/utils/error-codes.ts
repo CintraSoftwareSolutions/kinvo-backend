@@ -21,6 +21,7 @@ export const ERROR_CODES = {
 
   NOT_FOUND: 'NOT_FOUND',
   CONFLICT: 'CONFLICT',
+  NEW_MATCHES_PAUSED: 'NEW_MATCHES_PAUSED',
 
   FILE_TOO_LARGE: 'FILE_TOO_LARGE',
   UNSUPPORTED_MEDIA_TYPE: 'UNSUPPORTED_MEDIA_TYPE',
@@ -52,6 +53,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
 
   NOT_FOUND: 404,
   CONFLICT: 409,
+  NEW_MATCHES_PAUSED: 409,
 
   FILE_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
@@ -84,6 +86,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
 
   NOT_FOUND: 'We could not find what you were looking for.',
   CONFLICT: 'That already exists.',
+  NEW_MATCHES_PAUSED: 'You have paused new matches. Turn that off to like people again.',
 
   FILE_TOO_LARGE: 'That file is too large.',
   UNSUPPORTED_MEDIA_TYPE: 'That file type is not supported.',

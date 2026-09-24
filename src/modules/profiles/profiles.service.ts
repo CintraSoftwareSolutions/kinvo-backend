@@ -1,5 +1,6 @@
 import { prisma } from '@/db/prisma';
 import { distanceBetweenProfiles, getProfileCoordinates, setProfileLocation } from '@/db/geo';
+import { assertIncognitoAllows } from '@modules/discovery/incognito';
 import { assertVisible } from '@modules/safety/block.service';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
@@ -153,6 +154,8 @@ export async function getPublicProfile(
   targetUserId: string,
 ): Promise<PublicProfile> {
   await assertVisible(viewerId, targetUserId);
+  // Incognito: only people they have liked, and their matches, may open it.
+  await assertIncognitoAllows(viewerId, targetUserId);
 
   const target = await prisma.user.findUnique({
     where: { id: targetUserId },

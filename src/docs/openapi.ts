@@ -523,10 +523,10 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Discovery',
     summary: 'Pass, like, or super like',
     description:
-      'The three actions are identical in every mode — only the label the app renders changes, and that comes from GET /config. Responds with `is_match` and the match when the target had already liked you IN THIS MODE. Likes and super likes spend daily quota; a pass is free. A second swipe on the same person in the same mode is 409.',
+      'The three actions are identical in every mode — only the label the app renders changes, and that comes from GET /config. Responds with `is_match` and the match when the target had already liked you IN THIS MODE. Likes and super likes spend daily quota; a pass is free. A second swipe on the same person in the same mode is 409. With new matches paused (settings), a like or super like is 409 NEW_MATCHES_PAUSED before any quota is spent — offer to turn the pause off; a pass still works. A like that completes a pair while either side is paused makes no match yet: the match is made, and announced to both, when the pause ends.',
     body: swipeBodySchema,
     auth: true,
-    errors: [E.VALIDATION_FAILED, E.NOT_FOUND, E.CONFLICT, E.QUOTA_EXCEEDED],
+    errors: [E.VALIDATION_FAILED, E.NOT_FOUND, E.CONFLICT, E.NEW_MATCHES_PAUSED, E.QUOTA_EXCEEDED],
   },
   {
     method: 'post',
@@ -1316,7 +1316,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Settings',
     summary: 'Update settings',
     description:
-      'Send only what changed. distance_unit is display only — the API always returns metres. show_distance false makes distance_metres null for everyone else (deck cards, profiles). show_last_active false makes is_online false and last_active_at null everywhere others see you, and your matches get one presence update saying so. Incognito, global_verified_only and pause_new_matches are stored but not applied yet.',
+      'Send only what changed. distance_unit is display only — the API always returns metres. show_distance false makes distance_metres null for everyone else (deck cards, profiles). show_last_active false makes is_online false and last_active_at null everywhere others see you, and your matches get one presence update saying so. incognito true shows you only to people you have liked, in the mode you liked them in, and to your matches; everyone else stops finding you in decks and gets 404 for your profile. global_verified_only true shows you only verified people in every mode, and rebuilds the decks built today. pause_new_matches true keeps you visible but refuses your likes with NEW_MATCHES_PAUSED and makes no new match; turning it off makes the matches it held back, and announces them.',
     body: settingsSchema.updateSettingsSchema,
     auth: true,
     errors: [E.VALIDATION_FAILED],
