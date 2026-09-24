@@ -9,12 +9,18 @@
 #
 # TWO OPERATIONAL LIMITS, both real:
 #
-#  1. A new SES account is in SANDBOX. It delivers only to verified addresses
-#     and caps at 200 messages a day. Mail to anyone else is accepted by the API
-#     and silently dropped, which is the worst failure mode to discover in
-#     production. Production access is a support request, and AWS asks how
-#     bounces and complaints are handled — which is what the rest of this file
-#     is for.
+#  1. A new SES account is in SANDBOX. It delivers only to verified addresses,
+#     caps at 200 messages a day, and — the part that is easy to miss —
+#     authorises each send against the RECIPIENT identity as well, which is
+#     what the policy at the bottom of this file had to be rewritten for.
+#     Production access is a support request, and AWS asks how bounces and
+#     complaints are handled, which is what the rest of this file is for.
+#
+#     Mail to anyone else used to be accepted by the API and silently dropped.
+#     That half is fixed on the other side now: a provider reports whether the
+#     TRANSPORT failed or the RECIPIENT was refused, and password reset answers
+#     503 to the first instead of claiming a code is on its way. See
+#     DECISIONS.md, 24 Sep 2026.
 #
 #  2. Without a verified DOMAIN there is no DKIM or SPF alignment, so delivered
 #     mail is far more likely to land in spam. That needs a domain; it cannot be
@@ -22,6 +28,10 @@
 
 # The sender. A bare address until a domain exists — verified out of band,
 # because AWS emails a confirmation link that a human has to click.
+#
+# Nothing below names it any more: the policy pins the sender with a condition
+# instead. It is kept because reading it is an assertion — a plan fails here,
+# loudly, if the address this deployment sends from stops being verified.
 data "aws_sesv2_email_identity" "sender" {
   email_identity = var.ses_sender_address
 }
@@ -92,15 +102,31 @@ resource "aws_iam_role_policy" "ses" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "SendOnlyAsTheKinvoSender"
         Effect = "Allow"
         Action = ["ses:SendEmail", "ses:SendRawEmail"]
-        # Scoped to the one identity and the one configuration set. A wildcard
-        # here would let a compromised instance send as any verified identity in
-        # the account.
+        # Every identity in this account and region, not the sender alone —
+        # because while the account is in the SANDBOX, SES authorises a send
+        # against the RECIPIENT identity as well. Scoped to the sender, as it
+        # was, this policy denied every password reset email with an
+        # AccessDeniedException naming the recipient, and nothing in that error
+        # mentions the sandbox rule behind it. Staging ran that way from its
+        # first deploy until 24 Sep 2026, answering "a reset code is on its
+        # way" every time.
         Resource = [
-          data.aws_sesv2_email_identity.sender.arn,
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/*",
           aws_sesv2_configuration_set.main.arn,
         ]
+        # What the narrow Resource was there to protect, kept — the instance can
+        # still only send AS this one address. A wildcard resource on its own
+        # would let a compromised instance send as any verified identity in the
+        # account; pinning the From address is how SES expresses that, and it
+        # keeps working when production access removes the recipient check.
+        Condition = {
+          StringEquals = {
+            "ses:FromAddress" = var.ses_sender_address
+          }
+        }
       }
     ]
   })

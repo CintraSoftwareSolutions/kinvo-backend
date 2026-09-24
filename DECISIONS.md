@@ -1732,10 +1732,11 @@ a registered and an unregistered address, the request that discovers the
 outage, a refused recipient reading exactly like success, and recovery once the
 transport works again.
 
-Still outstanding, and neither is code: production access, and the
-bounce/complaint topic `kinvo-staging-email-events`, which has no subscribers —
-the events are published and nothing reads them. The account-level suppression
-list is what protects the sending reputation today.
+Still outstanding, and not code: production access. The bounce and complaint
+topic `kinvo-staging-email-events` has no subscribers, which is deliberate and
+already argued in `infra/email.tf` — SES suppresses bounced and complained
+addresses at the ACCOUNT level, so nothing here needs to read those events, and
+the two reputation alarms are what actually watch the rates.
 
 ## 3. Batch plan and dependencies
 
