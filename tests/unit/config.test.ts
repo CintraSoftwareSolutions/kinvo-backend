@@ -179,7 +179,7 @@ describe('environment validation (spec 7, Batch 0)', () => {
     // On AWS the instance supplies credentials through its IAM role, so there
     // are no static keys to set. Requiring them would force a long-lived secret
     // onto the box to satisfy a check — the worse practice, mandated by us.
-    // The variables exist only for MinIO locally.
+    // The variables exist only for SeaweedFS locally.
     const withoutKeys: NodeJS.ProcessEnv = {
       ...VALID,
       ...PRODUCTION_CREDENTIALS,

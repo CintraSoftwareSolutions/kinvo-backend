@@ -7,7 +7,7 @@ import { authHeader } from './auth';
  * Upload helpers.
  *
  * These perform genuine round trips: the API issues a presigned URL, the test
- * PUTs bytes straight to MinIO exactly as the app would, and the API confirms
+ * PUTs bytes straight to SeaweedFS exactly as the app would, and the API confirms
  * by asking storage what landed. Nothing about the storage path is faked.
  */
 

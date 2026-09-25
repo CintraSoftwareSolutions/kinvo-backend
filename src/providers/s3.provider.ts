@@ -18,7 +18,7 @@ import { logger } from '@utils/logger';
  * The only module that knows S3 exists. Everything else asks for an upload
  * target or a viewable URL and never sees a bucket name or a client.
  *
- * In development and tests this points at MinIO, which speaks the S3 API — so
+ * In development and tests this points at SeaweedFS, which speaks the S3 API — so
  * the SDK, the presigning, and the bucket separation are all real, and moving
  * to AWS is a change of endpoint and credentials with no code change.
  *
@@ -53,8 +53,13 @@ export function getS3Client(): S3Client {
     region: env.S3_REGION,
     // Unset against real AWS, where the SDK resolves the regional endpoint.
     ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
-    // MinIO addresses buckets by path; AWS by virtual host.
+    // The local store addresses buckets by path; AWS by virtual host.
     forcePathStyle: env.S3_FORCE_PATH_STYLE,
+    // Checksums only where S3 demands one. By default the SDK signs a CRC32
+    // into every presigned PUT, and with no body yet it is the checksum of
+    // nothing, `AAAAAA==`. AWS has accepted uploads regardless, but a store
+    // that checks it refuses every one as BadDigest (DECISIONS.md, 25 Sep 2026).
+    requestChecksumCalculation: 'WHEN_REQUIRED',
     ...(env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY
       ? {
           credentials: {

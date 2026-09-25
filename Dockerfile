@@ -1,7 +1,7 @@
 # Production image for the Kinvo API.
 #
 # Distinct from docker-compose.yml, which is local development only and runs
-# Postgres, Redis, and MinIO. This packages the API itself and nothing else.
+# Postgres, Redis, and SeaweedFS. This packages the API itself and nothing else.
 #
 # Debian slim rather than Alpine: argon2 is a native module and ships prebuilt
 # binaries for glibc. On musl it has to compile from source, which needs a

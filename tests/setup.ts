@@ -33,7 +33,7 @@ process.env.JSON_BODY_LIMIT ??= '1mb';
 process.env.REDIS_URL ??= 'redis://localhost:6380';
 
 /**
- * Media storage. Tests run against the MinIO container from docker-compose, not
+ * Media storage. Tests run against the SeaweedFS container from docker-compose, not
  * a fake — the presigning, the direct PUT, and the private-bucket policy are all
  * exercised for real (spec §0.4 mocks external HTTP only, and this is ours).
  */

@@ -40,53 +40,39 @@ services:
 
   # S3 for local development and tests.
   #
-  # MinIO speaks the S3 API, so the application uses the real AWS SDK against it
-  # and nothing about the upload, presigning, or bucket-policy code is a stub.
+  # SeaweedFS speaks the S3 API, so the application uses the real AWS SDK against
+  # it and nothing about the upload, presigning, or bucket-policy code is a stub.
   # Moving to AWS S3 is a change of endpoint and credentials in .env — no code
   # change. This is not a substitution of the stack (spec 2); it is the same
   # client pointed somewhere local.
-  # From quay.io, MinIO's own registry, and pinned: `docker.io/minio/minio`
-  # no longer exists, and a pull of it fails with "repository does not exist",
-  # which reads like a login problem and is not one. The pin also holds this at
-  # the last release that still ships the web console below.
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: kinvo-minio
+  #
+  # It replaced MinIO in September 2026, when MinIO's open-source edition was
+  # archived and its images and downloads withdrawn. `mini` runs the whole store
+  # in one process and creates both buckets on start. They are private because
+  # docker/seaweedfs/s3.json defines one identity and no anonymous one. Pinned by
+  # digest, as CI is.
+  storage:
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    container_name: kinvo-storage
     restart: unless-stopped
-    command: ['server', '/data', '--console-address', ':9001']
-    environment:
-      MINIO_ROOT_USER: kinvo
-      MINIO_ROOT_PASSWORD: kinvo-dev-secret
+    command:
+      - mini
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -bucket=kinvo-media,kinvo-verification
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -webdav=false
+      - -master.telemetry=false
     ports:
-      # 9000 is the S3 API, 9001 the web console for eyeballing uploads.
-      - '9100:9000'
-      - '9101:9001'
+      # 8333 is the S3 API. 23646 is the admin UI for eyeballing uploads; it has
+      # no login, so it listens on this machine only.
+      - '9100:8333'
+      - '127.0.0.1:9101:23646'
     volumes:
-      - kinvo_minio_data:/data
-    healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
-      interval: 5s
-      timeout: 5s
-      retries: 15
-
-  # One-shot: creates the buckets and locks them down, then exits.
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: kinvo-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 kinvo kinvo-dev-secret;
-      mc mb --ignore-existing local/kinvo-media;
-      mc mb --ignore-existing local/kinvo-verification;
-      mc anonymous set none local/kinvo-media;
-      mc anonymous set none local/kinvo-verification;
-      echo 'buckets ready: kinvo-media (private), kinvo-verification (private)';
-      "
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - kinvo_storage_data:/data
 
 volumes:
   kinvo_postgres_data:
   kinvo_redis_data:
-  kinvo_minio_data:
+  kinvo_storage_data:

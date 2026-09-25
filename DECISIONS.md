@@ -1915,6 +1915,42 @@ have tests that hold one side's transaction open while the other arrives.
 A second rewind of the same swipe (a double tap) used to hit Prisma's P2025
 and answer 500. It now answers 409 CONFLICT.
 
+### 2026-09-25 — SeaweedFS replaces MinIO, and uploads stop signing an empty checksum
+
+CI failed before running a test: pulling the pinned MinIO image from quay.io
+was refused. MinIO's open-source edition has been archived. Its images are no
+longer public on quay.io (an anonymous pull token grants no actions), as they
+had already vanished from Docker Hub, and dl.min.io answers every community
+release, server and `mc` alike, with 410 Gone. Nothing pinned can bring it
+back, and an archived server gets no security fixes, so CI and the compose
+file needed a different local S3.
+
+**SeaweedFS 4.47**, pinned by digest, in its `mini` mode: one process, both
+buckets created on start, private because `docker/seaweedfs/s3.json` defines
+one identity and no anonymous one. Chosen because it is Apache-licensed,
+actively released, and enforces signatures; the test-oriented mocks (S3Mock
+and the like) accept unsigned requests, and `uploads.test.ts` asserts that an
+unsigned read of a private bucket is refused. Before switching, it was run
+here against the backend's own AWS SDK and passed: presigned PUT, HEAD with
+the real size and type, presigned GET, unsigned read refused, a longer body
+refused, a forged signature refused, an expired URL refused, delete.
+
+That check found a real problem in our code. **The SDK signs a CRC32 into
+every presigned PUT** (`x-amz-checksum-crc32`, with the flexible-checksums
+default of `WHEN_SUPPORTED`), and since the body does not exist when the URL is
+made, it is the checksum of nothing: `AAAAAA==`. MinIO ignored it and AWS has
+accepted uploads regardless, but SeaweedFS checks it, and refused every upload
+as BadDigest. The client now sets `requestChecksumCalculation: 'WHEN_REQUIRED'`,
+so checksums are computed only for operations S3 requires one for, and upload
+URLs no longer carry one that could only ever be wrong. To confirm on staging
+with a real upload after deploy.
+
+Found by the same check and **not fixed here**: the upload URL does not sign
+the content type (`X-Amz-SignedHeaders` is `content-length;host`), although
+`presignUpload`'s comment says it does, and `completeUpload` records whatever
+type storage reports without checking it against the purpose's allowed list.
+The length is enforced; the type is not. Reported to the product owner.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

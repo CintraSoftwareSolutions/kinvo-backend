@@ -127,19 +127,19 @@ export const envSchema = z.object({
     ),
 
   // --- Media storage (Batch 4) --------------------------------------------
-  // S3 in every environment. Locally that S3 is MinIO, which speaks the same
+  // S3 in every environment. Locally that S3 is SeaweedFS, which speaks the same
   // API, so only the endpoint and credentials differ between here and AWS.
   S3_REGION: z.string().min(1).default('us-east-1'),
 
   /**
-   * Set for MinIO, unset for real AWS S3 (the SDK then resolves the regional
+   * Set for SeaweedFS, unset for real AWS S3 (the SDK then resolves the regional
    * endpoint itself).
    */
   S3_ENDPOINT: z.string().url().optional(),
 
   /**
-   * MinIO addresses buckets as a path (host/bucket/key); AWS uses a virtual
-   * host (bucket.host/key). Must be true against MinIO.
+   * SeaweedFS addresses buckets as a path (host/bucket/key); AWS uses a virtual
+   * host (bucket.host/key). Must be true against SeaweedFS.
    */
   S3_FORCE_PATH_STYLE: z
     .string()
@@ -291,7 +291,7 @@ export class EnvValidationError extends Error {
  * On AWS the instance supplies credentials through its IAM role, so there are
  * no static keys to set — that is the better practice, and demanding them here
  * would force a long-lived secret onto the box for no reason. The SDK resolves
- * the role automatically; the variables exist only for MinIO locally.
+ * the role automatically; the variables exist only for SeaweedFS locally.
  */
 const PRODUCTION_REQUIRED: { key: keyof Env; message: string }[] = [
   { key: 'TWILIO_ACCOUNT_SID', message: 'required in production for OTP delivery' },

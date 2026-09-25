@@ -71,7 +71,7 @@ Every variable is documented in `.env.example` and validated by `src/config/env.
 
 - The API is versioned at `/api/v1`.
 - Docker publishes Postgres on **5433** and Redis on **6380** to avoid colliding with local installs. A `kinvo_test` database is created on first container start for the test suite.
-- **MinIO** provides S3 locally: API on `:9100`, web console on `:9101` (login `kinvo` / `kinvo-dev-secret`). Buckets `kinvo-media` and `kinvo-verification` are created automatically and are both private.
+- **SeaweedFS** provides S3 locally: API on `:9100` (key `kinvo`, secret `kinvo-dev-secret`), admin UI on `:9101`, reachable from this machine only. Buckets `kinvo-media` and `kinvo-verification` are created automatically and are both private. It replaced MinIO, whose open-source edition was archived in September 2026: run `docker compose up -d --remove-orphans` once to drop the old MinIO containers.
 - **Tests require Docker.** `npm test` migrates the `kinvo_test` database automatically before running, and truncates it between tests. It never touches `kinvo_dev`.
 - After seeding, sign in as any dev user — for example `sarah.dev@kinvo.test` / `kinvo-dev-password`.
 - Without Twilio credentials, phone OTP falls back to a development stub that sends no SMS and accepts the code `000000`. Production refuses to start without real credentials, so that stub cannot reach real users.

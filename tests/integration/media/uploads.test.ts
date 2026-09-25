@@ -8,7 +8,7 @@ import { MEDIA_BASE, TINY_PNG, uploadFile } from '../../helpers/media';
 /**
  * The upload handshake (spec §4.8).
  *
- * Runs against the MinIO container, so the presigning, the direct PUT, and the
+ * Runs against the SeaweedFS container, so the presigning, the direct PUT, and the
  * private-bucket policy are all real.
  */
 

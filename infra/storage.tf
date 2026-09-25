@@ -1,12 +1,12 @@
 # ---------------------------------------------------------------------------
-# S3 — replaces local MinIO
+# S3 — replaces local SeaweedFS
 #
 # Two buckets, matching docker-compose exactly, because the separation is a
 # safety property and not a naming convention: government ID images must never
 # share a bucket policy with profile selfies (spec §7, Batch 4).
 #
 # The application changes nothing. S3_ENDPOINT and S3_FORCE_PATH_STYLE are
-# simply absent in the cloud, so the AWS SDK talks to real S3 instead of MinIO.
+# simply absent in the cloud, so the AWS SDK talks to real S3 instead of SeaweedFS.
 # ---------------------------------------------------------------------------
 
 resource "random_id" "bucket_suffix" {

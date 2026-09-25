@@ -85,45 +85,44 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      # MinIO is started as a step rather than a service container, because a
-      # service container cannot override the image's command and MinIO needs
-      # `server /data`. The media tests exercise real presigning against it —
-      # the SDK and the private-bucket policy are not faked.
-      # MinIO is pulled from quay.io, NOT Docker Hub, and pinned.
+      # Local S3 for the media tests, which presign, PUT straight to storage,
+      # HEAD what landed and read it back — and expect an unsigned read of a
+      # private bucket to be refused. None of it is faked.
       #
-      # `docker.io/minio/minio` stopped existing: the repository now 404s, and
-      # a pull fails with "pull access denied ... repository does not exist",
-      # which reads like a credentials problem and is not one. quay.io is
-      # MinIO's own registry and is where the images have always been published.
+      # SeaweedFS, since MinIO's open-source edition was archived in September
+      # 2026: its images went private on quay.io (as they had already vanished
+      # from Docker Hub) and its downloads answer 410 Gone. `mini` runs the
+      # whole store in one process and creates both buckets. The one identity
+      # in docker/seaweedfs/s3.json, and no anonymous one, is what keeps them
+      # private. Started as a step because a service container cannot be given
+      # a command, or a file from the checkout.
       #
-      # Pinned rather than :latest because this is the second way this
-      # dependency can break the build without anyone changing a line of code —
-      # and because the release after this one drops the web console the compose
-      # file exposes.
-      - name: Start MinIO
+      # Pinned by digest: the storage image has now broken the build twice
+      # without a line of ours changing.
+      - name: Start S3 storage
         run: |
-          docker run -d --name minio \
-            -p 9100:9000 \
-            -e MINIO_ROOT_USER=kinvo \
-            -e MINIO_ROOT_PASSWORD=kinvo-dev-secret \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          docker run -d --name storage \
+            -p 9100:8333 \
+            -v "$PWD/docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro" \
+            chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882 \
+            mini -s3.config=/etc/seaweedfs/s3.json \
+              -bucket=kinvo-media,kinvo-verification \
+              -s3.port.iceberg=0 -s3.port.lance=0 -webdav=false \
+              -admin.ui=false -master.telemetry=false
 
+          # Ready means both buckets answer to the test credentials, not
+          # merely that the port is open.
+          export AWS_ACCESS_KEY_ID=kinvo AWS_SECRET_ACCESS_KEY=kinvo-dev-secret AWS_DEFAULT_REGION=us-east-1
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:9100/minio/health/live; then break; fi
+            if aws --endpoint-url http://localhost:9100 s3api head-bucket --bucket kinvo-media >/dev/null 2>&1 &&
+              aws --endpoint-url http://localhost:9100 s3api head-bucket --bucket kinvo-verification >/dev/null 2>&1; then
+              echo "storage ready after $((i * 2))s"
+              exit 0
+            fi
             sleep 2
           done
-
-          # `mc` IS this image's entrypoint, so a shell command line is read as
-          # an mc subcommand: passing `sh -c '...'` fails with "sh is not a
-          # recognized command". MC_HOST_<alias> names the server from the
-          # environment instead — no shell, and nothing to persist, which suits
-          # a container that is thrown away after one command.
-          for bucket in kinvo-media kinvo-verification; do
-            docker run --rm --network host \
-              -e MC_HOST_local=http://kinvo:kinvo-dev-secret@localhost:9100 \
-              quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \
-              mb --ignore-existing "local/$bucket"
-          done
+          docker logs storage
+          exit 1
 
       - run: npm ci
 

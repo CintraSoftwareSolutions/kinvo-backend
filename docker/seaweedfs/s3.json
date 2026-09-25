@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "kinvo",
+      "credentials": [{ "accessKey": "kinvo", "secretKey": "kinvo-dev-secret" }],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ]
+}
