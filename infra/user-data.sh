@@ -94,6 +94,11 @@ REQUIRE_THIRD_PARTY_INTEGRATIONS=false
 # waiver above is removed, so the two cannot both be forgotten.
 TEST_PURCHASES_ENABLED=true
 
+# Phone sign-in stays hidden until the Twilio account can text: without an
+# approved compliance profile it refuses every number (error 21608). Set true,
+# and restart, once it is approved (DECISIONS.md, 25 Sep 2026).
+PHONE_SIGN_IN_ENABLED=false
+
 # Email through SES. No credentials: the instance role signs the calls.
 SES_SENDER_ADDRESS=${ses_sender_address}
 SES_CONFIGURATION_SET=${ses_configuration_set}

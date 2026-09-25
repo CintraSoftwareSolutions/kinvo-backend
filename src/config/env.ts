@@ -259,6 +259,17 @@ export const envSchema = z.object({
     .string()
     .default('false')
     .transform((value) => value === 'true'),
+
+  /**
+   * Phone sign-in (DECISIONS.md, 25 Sep 2026). On unless set to "false", as
+   * the spec asks. Off where the Twilio account cannot text anyone yet, so the
+   * app stops offering a button that can only fail: GET /config says so, and
+   * the code endpoints refuse before Twilio is called.
+   */
+  PHONE_SIGN_IN_ENABLED: z
+    .string()
+    .default('true')
+    .transform((value) => value !== 'false'),
 });
 
 export type Env = z.infer<typeof envSchema>;

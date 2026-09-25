@@ -6,6 +6,7 @@ jest.mock('@/providers/twilio.provider', () => ({
   getOtpProvider: () => mockOtpProvider,
 }));
 
+import { env } from '@config/env';
 import { prisma } from '@/db/prisma';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { AUTH_BASE, createAuthenticatedUser } from '../../helpers/auth';
@@ -46,6 +47,48 @@ describe('POST /auth/otp/send', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error.details).toHaveProperty('phone');
+  });
+});
+
+describe('with phone sign-in switched off', () => {
+  let switchWas: boolean;
+
+  beforeEach(() => {
+    switchWas = env.PHONE_SIGN_IN_ENABLED;
+    env.PHONE_SIGN_IN_ENABLED = false;
+  });
+
+  afterEach(() => {
+    env.PHONE_SIGN_IN_ENABLED = switchWas;
+  });
+
+  it('texts nothing, and says to use email', async () => {
+    const response = await api.post(`${AUTH_BASE}/otp/send`).send({ phone: PHONE });
+
+    expect(response.status).toBe(503);
+    expectErrorEnvelope(response.body, 'SERVICE_UNAVAILABLE');
+    expect(response.body.error.message).toBe(
+      'We cannot send text messages at the moment. Please sign in with your email address instead.',
+    );
+    // Refused before Twilio is asked, so nothing is spent on it.
+    expect(otpCalls.sent).toEqual([]);
+  });
+
+  it('signs nobody in, even with a code that would be accepted', async () => {
+    const response = await api
+      .post(`${AUTH_BASE}/otp/verify`)
+      .send({ phone: PHONE, code: VALID_OTP_CODE });
+
+    expect(response.status).toBe(503);
+    expect(otpCalls.checked).toEqual([]);
+    expect(await prisma.authIdentity.count({ where: { provider: 'phone' } })).toBe(0);
+  });
+
+  it('still checks the number first', async () => {
+    // Validation runs before the switch: a malformed request is a 400 either way.
+    const response = await api.post(`${AUTH_BASE}/otp/send`).send({ phone: '07700900123' });
+
+    expect(response.status).toBe(400);
   });
 });
 

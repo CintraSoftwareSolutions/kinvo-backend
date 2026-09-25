@@ -1,4 +1,5 @@
 import { API_PREFIX } from '@config/constants';
+import { env } from '@config/env';
 import { UserStatus, prisma } from '@/db/prisma';
 import { connectRedis, disconnectRedis } from '@/db/redis';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
@@ -109,6 +110,45 @@ describe('GET /config (spec §4.12)', () => {
     // release per mode.
     expect(modes.find((mode) => mode.value === 'study_buddy')?.primary_action_label).toBe('Study');
     expect(modes.find((mode) => mode.value === 'trading')?.primary_action_label).toBe('Trade');
+  });
+
+  describe('sign_in', () => {
+    const was = {
+      phone: env.PHONE_SIGN_IN_ENABLED,
+      google: env.GOOGLE_OAUTH_CLIENT_IDS,
+      apple: env.APPLE_CLIENT_IDS,
+    };
+
+    afterEach(() => {
+      env.PHONE_SIGN_IN_ENABLED = was.phone;
+      env.GOOGLE_OAUTH_CLIENT_IDS = was.google;
+      env.APPLE_CLIENT_IDS = was.apple;
+    });
+
+    it('offers each way of signing in only while this server can complete it', async () => {
+      env.PHONE_SIGN_IN_ENABLED = true;
+      env.GOOGLE_OAUTH_CLIENT_IDS = ['web.apps.googleusercontent.com'];
+      env.APPLE_CLIENT_IDS = [];
+
+      const response = await api.get(CONFIG);
+
+      expect(response.body.data.sign_in).toEqual({
+        email: true,
+        phone: true,
+        google: true,
+        apple: false,
+      });
+    });
+
+    it('stops offering phone the moment it is switched off', async () => {
+      env.PHONE_SIGN_IN_ENABLED = false;
+
+      const response = await api.get(CONFIG);
+
+      // The app hides the button on this, rather than letting it fail.
+      expect(response.body.data.sign_in.phone).toBe(false);
+      expect(response.body.data.sign_in.email).toBe(true);
+    });
   });
 
   it('serves exactly three deck actions, shared by every mode', async () => {

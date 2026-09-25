@@ -138,6 +138,8 @@ Path aliases: `@/*`, `@config/*`, `@middleware/*`, `@modules/*`, `@utils/*`. Dec
 
 Mount `authenticate` on anything needing a user, then `requireOnboarded` on **every** discovery, matching, and chat route. That second gate is what keeps accounts created by social or phone sign-in — which have no date of birth yet — out of the product until onboarding runs the under-18 check. Omitting it is a legal problem, not a UX one.
 
+`GET /config` `sign_in` tells the app which sign-in methods this server can complete, and the app shows only those. A new method, or a new way for one to be unavailable, belongs in `signInMethods()` so the button and the endpoint never disagree. Phone is the `PHONE_SIGN_IN_ENABLED` switch (DECISIONS.md, 25 Sep 2026).
+
 `date_of_birth` is nullable because Google, Apple, and Twilio do not supply one. Call `assertAdult()` from `@utils/age` **wherever** a date of birth is set, never only at registration.
 
 Never widen `req.user` from a token claim. `authenticate` loads the user on every request so suspension and deletion take effect immediately rather than whenever the 30-minute token happens to expire.

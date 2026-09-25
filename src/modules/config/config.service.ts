@@ -1,5 +1,6 @@
 import { Mode, prisma } from '@/db/prisma';
 import { PAGINATION } from '@config/constants';
+import { env } from '@config/env';
 
 /**
  * GET /config (spec §4.12).
@@ -154,6 +155,30 @@ export interface AppConfig {
     default_page_size: number;
     max_page_size: number;
   };
+  sign_in: SignInMethods;
+}
+
+/**
+ * Which ways of signing in this server can complete right now, so the app
+ * offers only buttons that lead somewhere (DECISIONS.md, 25 Sep 2026). Email
+ * always can. Phone is the PHONE_SIGN_IN_ENABLED switch, because only an
+ * operator knows whether the Twilio account can text. Google and Apple need
+ * the client ids their tokens are checked against.
+ */
+export interface SignInMethods {
+  email: boolean;
+  phone: boolean;
+  google: boolean;
+  apple: boolean;
+}
+
+export function signInMethods(): SignInMethods {
+  return {
+    email: true,
+    phone: env.PHONE_SIGN_IN_ENABLED,
+    google: env.GOOGLE_OAUTH_CLIENT_IDS.length > 0,
+    apple: env.APPLE_CLIENT_IDS.length > 0,
+  };
 }
 
 export async function getAppConfig(): Promise<AppConfig> {
@@ -188,5 +213,6 @@ export async function getAppConfig(): Promise<AppConfig> {
       default_page_size: PAGINATION.DEFAULT_LIMIT,
       max_page_size: PAGINATION.MAX_LIMIT,
     },
+    sign_in: signInMethods(),
   };
 }

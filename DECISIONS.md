@@ -1951,6 +1951,29 @@ the content type (`X-Amz-SignedHeaders` is `content-length;host`), although
 type storage reports without checking it against the purpose's allowed list.
 The length is enforced; the type is not. Reported to the product owner.
 
+### 2026-09-25 — The app offers only the sign-in methods that work
+
+Auditing the app, the product owner found a phone sign-in button that could
+only fail, and asked that nothing on the sign-in screens be a dummy. Phone
+sign-in cannot work on staging: the Twilio account has no compliance profile
+and no verified caller ids (checked read-only on 25 Sep), so Twilio refuses
+every number with 21608, and the user only learns that after typing one in.
+
+`GET /config` now carries `sign_in: { email, phone, google, apple }`, each true
+only while this server can complete that method: email always; Google and
+Apple while their client ids are set; phone by a new switch,
+`PHONE_SIGN_IN_ENABLED`. A switch rather than something detected, because
+nothing in the Twilio configuration says whether the account can text — only
+an operator knows the compliance profile has been approved. It defaults to on,
+as the spec asks, and staging sets it false until then. Switched off, the code
+endpoints refuse before Twilio is called, with the same message a Twilio
+account that cannot text already produced, so an app build that still shows
+the button says the same thing: use email.
+
+`/config` was the place for it because it is already public and fetched
+before sign-in (spec §4.12). Turning phone back on is one setting and a
+restart, with no app release.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

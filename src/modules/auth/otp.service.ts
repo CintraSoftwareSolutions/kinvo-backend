@@ -1,3 +1,4 @@
+import { env } from '@config/env';
 import { UserStatus, prisma } from '@/db/prisma';
 import { getOtpProvider } from '@/providers/twilio.provider';
 import { ApiError } from '@utils/api-error';
@@ -20,12 +21,28 @@ export interface OtpVerifyResult {
 }
 
 /**
+ * Refuses while phone sign-in is switched off (`PHONE_SIGN_IN_ENABLED`),
+ * before Twilio is called. Worded as the refusal from a Twilio account that
+ * cannot text, so an app build that still shows the button says the same
+ * thing either way: use email.
+ */
+function assertPhoneSignInEnabled(): void {
+  if (!env.PHONE_SIGN_IN_ENABLED) {
+    throw new ApiError(
+      ERROR_CODES.SERVICE_UNAVAILABLE,
+      'We cannot send text messages at the moment. Please sign in with your email address instead.',
+    );
+  }
+}
+
+/**
  * Sends a code.
  *
  * Deliberately does not reveal whether the number is registered — the response
  * is identical either way, so this cannot be used to enumerate users.
  */
 export async function sendOtp(phone: string): Promise<void> {
+  assertPhoneSignInEnabled();
   await getOtpProvider().sendCode(phone);
 }
 
@@ -34,6 +51,7 @@ export async function verifyOtp(
   code: string,
   displayName?: string,
 ): Promise<OtpVerifyResult> {
+  assertPhoneSignInEnabled();
   const result = await getOtpProvider().checkCode(phone, code);
 
   if (!result.valid) {

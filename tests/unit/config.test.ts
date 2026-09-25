@@ -284,6 +284,16 @@ describe('environment validation (spec 7, Batch 0)', () => {
     );
   });
 
+  it('keeps phone sign-in on unless told "false"', () => {
+    // On by default, as the spec asks; off only by an operator who knows the
+    // SMS account cannot text.
+    expect(parseEnv(VALID).PHONE_SIGN_IN_ENABLED).toBe(true);
+    expect(parseEnv({ ...VALID, PHONE_SIGN_IN_ENABLED: 'true' }).PHONE_SIGN_IN_ENABLED).toBe(true);
+    expect(parseEnv({ ...VALID, PHONE_SIGN_IN_ENABLED: 'false' }).PHONE_SIGN_IN_ENABLED).toBe(
+      false,
+    );
+  });
+
   it('splits comma-separated social client IDs', () => {
     const parsed = parseEnv({
       ...VALID,

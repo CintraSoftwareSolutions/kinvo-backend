@@ -95,7 +95,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Meta',
     summary: 'Enum catalogues and feature flags',
     description:
-      'Mode list with the label each mode renders for its deck action, interest tags, prompt questions, and report reasons. Fetch on launch and cache. Adding a mode or an interest ships through here, never through an app release.',
+      'Mode list with the label each mode renders for its deck action, interest tags, prompt questions, and report reasons. Fetch on launch and cache. Adding a mode or an interest ships through here, never through an app release. `sign_in` says which ways of signing in this server can complete — `email`, `phone`, `google`, `apple`, each true or false — so the app shows only those; phone can be switched off while the SMS account cannot text.',
     auth: false,
     errors: [],
   },
@@ -183,7 +183,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Auth',
     summary: 'Send a one-time code by SMS',
     description:
-      'NOT YET AVAILABLE on staging — returns SERVICE_UNAVAILABLE until Twilio is configured. The response never reveals whether a number is registered.',
+      'Texts a code through Twilio Verify. SERVICE_UNAVAILABLE while phone sign-in is switched off (GET /config `sign_in.phone` is false) or the SMS account cannot text; the message says to use email. The response never reveals whether a number is registered.',
     body: authSchema.sendOtpSchema,
     auth: false,
     errors: [E.VALIDATION_FAILED, E.RATE_LIMITED, E.SERVICE_UNAVAILABLE],
@@ -194,7 +194,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Auth',
     summary: 'Verify a one-time code and sign in',
     description:
-      'NOT YET AVAILABLE on staging. A number with no account creates a pending one, which cannot use discovery or chat until onboarding supplies a date of birth.',
+      'SERVICE_UNAVAILABLE while phone sign-in is switched off (GET /config `sign_in.phone`). A number with no account creates a pending one, which cannot use discovery or chat until onboarding supplies a date of birth.',
     body: authSchema.verifyOtpSchema,
     auth: false,
     errors: [
