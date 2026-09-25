@@ -5,6 +5,15 @@ import { z } from 'zod';
 // has already populated process.env, and dotenv never overwrites existing keys.
 loadDotenv();
 
+/** An empty variable means unset: compose files and `.env` templates carry empty keys. */
+const blankIsUnset = (value: unknown): unknown => (value === '' ? undefined : value);
+
+/** A web page the app may open as it is, so only ever a secure one. */
+const httpsPage = z
+  .string()
+  .url()
+  .refine((value) => value.startsWith('https://'), { message: 'must be an https:// address' });
+
 /**
  * Spec 7 / Batch 0: the process must crash on a missing or invalid required
  * variable rather than boot half-configured.
@@ -270,6 +279,19 @@ export const envSchema = z.object({
     .string()
     .default('true')
     .transform((value) => value !== 'false'),
+
+  /**
+   * Where people get help and read the rules, served by GET /config so the
+   * app's Support screen and sign-up line can link to them (DECISIONS.md,
+   * 25 Sep 2026). Each is optional, and the app shows only those set: a link
+   * to nowhere is worse than none. Pages must be https, since the app opens
+   * them as they are.
+   */
+  SUPPORT_EMAIL: z.preprocess(blankIsUnset, z.string().email().optional()),
+  HELP_CENTER_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
+  COMMUNITY_GUIDELINES_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
+  TERMS_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
+  PRIVACY_POLICY_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
 });
 
 export type Env = z.infer<typeof envSchema>;

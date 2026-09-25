@@ -95,7 +95,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Meta',
     summary: 'Enum catalogues and feature flags',
     description:
-      'Mode list with the label each mode renders for its deck action, interest tags, prompt questions, and report reasons. Fetch on launch and cache. Adding a mode or an interest ships through here, never through an app release. `sign_in` says which ways of signing in this server can complete — `email`, `phone`, `google`, `apple`, each true or false — so the app shows only those; phone can be switched off while the SMS account cannot text.',
+      'Mode list with the label each mode renders for its deck action, interest tags, prompt questions, and report reasons. Fetch on launch and cache. Adding a mode or an interest ships through here, never through an app release. `sign_in` says which ways of signing in this server can complete — `email`, `phone`, `google`, `apple`, each true or false — so the app shows only those; phone can be switched off while the SMS account cannot text. `support` carries the support email address and the help centre, community guidelines, terms and privacy pages (https), each null until set; the app shows only what is set.',
     auth: false,
     errors: [],
   },

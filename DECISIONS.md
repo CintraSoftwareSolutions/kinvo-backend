@@ -1974,6 +1974,26 @@ the button says the same thing: use email.
 before sign-in (spec §4.12). Turning phone back on is one setting and a
 restart, with no app release.
 
+### 2026-09-25 — Support and legal pages come from /config
+
+The same audit asked for the app's demo to be removed and everything left to
+be real. The Support screen was a mock-up: four rows that did nothing when
+tapped and an "Email support" button that only pretended, and the welcome
+screen told people they agreed to Terms and a Privacy Policy that do not
+exist. Kinvo has no support address, help centre, guidelines, terms or
+privacy policy yet; those are the product owner's to supply, and the legal
+two are required before either store will list the app.
+
+`GET /config` now carries `support`: `email`, `help_url`, `guidelines_url`,
+`terms_url`, `privacy_url`, from five optional settings (`SUPPORT_EMAIL`,
+`HELP_CENTER_URL`, `COMMUNITY_GUIDELINES_URL`, `TERMS_URL`,
+`PRIVACY_POLICY_URL`), each null until set. The app shows only what is set,
+and the sign-up line only once both legal pages exist. Pages must be https
+and are refused at boot otherwise, because the app opens them as they are.
+Served from here rather than built into the app so a policy can move, or be
+added, without an app release. A blank setting means unset, as with
+`LIVEKIT_URL`, because `.env` templates carry empty keys.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

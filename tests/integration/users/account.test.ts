@@ -151,6 +151,31 @@ describe('GET /config (spec §4.12)', () => {
     });
   });
 
+  describe('support', () => {
+    const was = { email: env.SUPPORT_EMAIL, terms: env.TERMS_URL };
+
+    afterEach(() => {
+      env.SUPPORT_EMAIL = was.email;
+      env.TERMS_URL = was.terms;
+    });
+
+    it('serves only what is set, and null for the rest', async () => {
+      env.SUPPORT_EMAIL = 'help@kinvo.app';
+      env.TERMS_URL = 'https://kinvo.app/terms';
+
+      const response = await api.get(CONFIG);
+
+      // Null, never absent: the app hides each row it has no address for.
+      expect(response.body.data.support).toEqual({
+        email: 'help@kinvo.app',
+        help_url: null,
+        guidelines_url: null,
+        terms_url: 'https://kinvo.app/terms',
+        privacy_url: null,
+      });
+    });
+  });
+
   it('serves exactly three deck actions, shared by every mode', async () => {
     const response = await api.get(CONFIG);
 

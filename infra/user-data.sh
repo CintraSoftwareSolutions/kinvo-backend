@@ -99,6 +99,14 @@ TEST_PURCHASES_ENABLED=true
 # and restart, once it is approved (DECISIONS.md, 25 Sep 2026).
 PHONE_SIGN_IN_ENABLED=false
 
+# Support and legal pages for the app, each shown only once set. Pages must be
+# https. Kinvo has none yet: the product owner supplies them.
+SUPPORT_EMAIL=
+HELP_CENTER_URL=
+COMMUNITY_GUIDELINES_URL=
+TERMS_URL=
+PRIVACY_POLICY_URL=
+
 # Email through SES. No credentials: the instance role signs the calls.
 SES_SENDER_ADDRESS=${ses_sender_address}
 SES_CONFIGURATION_SET=${ses_configuration_set}

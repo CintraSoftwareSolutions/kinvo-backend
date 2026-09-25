@@ -294,6 +294,29 @@ describe('environment validation (spec 7, Batch 0)', () => {
     );
   });
 
+  it('reads support pages only as https addresses, and a blank one as unset', () => {
+    const parsed = parseEnv({
+      ...VALID,
+      SUPPORT_EMAIL: 'help@kinvo.app',
+      TERMS_URL: 'https://kinvo.app/terms',
+      // As .env templates and compose files carry them.
+      PRIVACY_POLICY_URL: '',
+    });
+
+    expect(parsed.SUPPORT_EMAIL).toBe('help@kinvo.app');
+    expect(parsed.TERMS_URL).toBe('https://kinvo.app/terms');
+    expect(parsed.PRIVACY_POLICY_URL).toBeUndefined();
+    expect(parseEnv(VALID).HELP_CENTER_URL).toBeUndefined();
+
+    // The app opens these as they are, so never anything but a secure page.
+    expect(() => parseEnv({ ...VALID, TERMS_URL: 'http://kinvo.app/terms' })).toThrow(
+      EnvValidationError,
+    );
+    expect(() => parseEnv({ ...VALID, SUPPORT_EMAIL: 'not-an-address' })).toThrow(
+      EnvValidationError,
+    );
+  });
+
   it('splits comma-separated social client IDs', () => {
     const parsed = parseEnv({
       ...VALID,

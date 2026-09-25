@@ -156,6 +156,31 @@ export interface AppConfig {
     max_page_size: number;
   };
   sign_in: SignInMethods;
+  support: SupportLinks;
+}
+
+/**
+ * Where people get help and read the rules, for the app's Support screen and
+ * the line on sign-up that says what signing up agrees to. Null until an
+ * operator sets it, and the app shows only what is set (DECISIONS.md,
+ * 25 Sep 2026).
+ */
+export interface SupportLinks {
+  email: string | null;
+  help_url: string | null;
+  guidelines_url: string | null;
+  terms_url: string | null;
+  privacy_url: string | null;
+}
+
+export function supportLinks(): SupportLinks {
+  return {
+    email: env.SUPPORT_EMAIL ?? null,
+    help_url: env.HELP_CENTER_URL ?? null,
+    guidelines_url: env.COMMUNITY_GUIDELINES_URL ?? null,
+    terms_url: env.TERMS_URL ?? null,
+    privacy_url: env.PRIVACY_POLICY_URL ?? null,
+  };
 }
 
 /**
@@ -214,5 +239,6 @@ export async function getAppConfig(): Promise<AppConfig> {
       max_page_size: PAGINATION.MAX_LIMIT,
     },
     sign_in: signInMethods(),
+    support: supportLinks(),
   };
 }

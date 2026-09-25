@@ -219,7 +219,9 @@ paths:
         app release. `sign_in` says which ways of signing in this server can
         complete — `email`, `phone`, `google`, `apple`, each true or false — so
         the app shows only those; phone can be switched off while the SMS
-        account cannot text.
+        account cannot text. `support` carries the support email address and the
+        help centre, community guidelines, terms and privacy pages (https), each
+        null until set; the app shows only what is set.
       security: []
       responses:
         "200":
