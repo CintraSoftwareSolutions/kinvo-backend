@@ -595,10 +595,12 @@ paths:
       description: Emails a six-digit code, single use, valid for an hour. Requesting
         a new code retires the previous one. The response is identical whether
         or not the address is registered, so it cannot be used to find out which
-        addresses have accounts. An environment with no mail transport — local,
-        test, and staging under the integration waiver — returns the code as
-        reset_code instead, so the flow stays testable there; production refuses
-        to boot without a transport, so it never does.
+        addresses have accounts. SERVICE_UNAVAILABLE means the mail transport is
+        down and no code was sent — the app should say so rather than send the
+        user to an inbox; it is returned for every address alike, registered or
+        not. An environment with NO transport at all — local and test — returns
+        the code as reset_code instead, so the flow stays testable there;
+        production refuses to boot without a transport, so it never does.
       security: []
       requestBody:
         required: true
@@ -657,6 +659,18 @@ paths:
                 error:
                   code: INTERNAL_ERROR
                   message: Something went wrong on our end.
+                  details: null
+        "503":
+          description: SERVICE_UNAVAILABLE — This service is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: SERVICE_UNAVAILABLE
+                  message: This service is temporarily unavailable.
                   details: null
   /api/v1/auth/reset-password:
     post:
@@ -3615,11 +3629,15 @@ paths:
       tags:
         - Discovery
       summary: Pass, like, or super like
-      description: The three actions are identical in every mode — only the label the
+      description: "The three actions are identical in every mode — only the label the
         app renders changes, and that comes from GET /config. Responds with
         `is_match` and the match when the target had already liked you IN THIS
         MODE. Likes and super likes spend daily quota; a pass is free. A second
-        swipe on the same person in the same mode is 409.
+        swipe on the same person in the same mode is 409. With new matches
+        paused (settings), a like or super like is 409 NEW_MATCHES_PAUSED before
+        any quota is spent — offer to turn the pause off; a pass still works. A
+        like that completes a pair while either side is paused makes no match
+        yet: the match is made, and announced to both, when the pause ends."
       parameters:
         - name: mode
           in: path
@@ -3694,7 +3712,8 @@ paths:
                   message: We could not find what you were looking for.
                   details: null
         "409":
-          description: CONFLICT — That already exists.
+          description: NEW_MATCHES_PAUSED — You have paused new matches. Turn that off to
+            like people again.
           content:
             application/json:
               schema:
@@ -3702,8 +3721,8 @@ paths:
               example:
                 success: false
                 error:
-                  code: CONFLICT
-                  message: That already exists.
+                  code: NEW_MATCHES_PAUSED
+                  message: You have paused new matches. Turn that off to like people again.
                   details: null
         "422":
           description: QUOTA_EXCEEDED — You have reached your limit for today.
@@ -3746,8 +3765,13 @@ paths:
       tags:
         - Discovery
       summary: Undo the last swipe in this mode
-      description: Restores the profile to the deck and refunds the quota it spent. If
-        that swipe had created a match, the match is removed too. Premium.
+      description: "Restores the profile to the deck and refunds the quota it spent.
+        Premium. A swipe that became a match is never undone: that answers 409
+        ALREADY_MATCHED, and nothing changes. Its `details.match_id` is the
+        match while it is still on your list — offer Unmatch, which is how a
+        match ends — and null once it has ended, the same whatever ended it.
+        `match_removed` is always false, and kept only for older app builds. 409
+        CONFLICT when another request already rewound the same swipe."
       parameters:
         - name: mode
           in: path
@@ -3812,6 +3836,18 @@ paths:
                 error:
                   code: NOT_FOUND
                   message: We could not find what you were looking for.
+                  details: null
+        "409":
+          description: CONFLICT — That already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: CONFLICT
+                  message: That already exists.
                   details: null
         "429":
           description: RATE_LIMITED — Too many requests. Please try again shortly.
@@ -4866,6 +4902,9 @@ paths:
                   maximum: 600000
                 moderation_overridden:
                   type: boolean
+                client_token:
+                  type: string
+                  format: uuid
               additionalProperties: false
       responses:
         "200":
@@ -8772,7 +8811,13 @@ paths:
         yearly. Prices are integer MINOR UNITS plus a currency — never floats —
         and are INFORMATIONAL, because whoever takes the payment decides what is
         actually charged. Readable without a token, since the paywall is shown
-        before some sign-in flows."
+        before some sign-in flows. `purchase_mode` says how a plan can be bought
+        HERE: `test` where test purchases are switched on (staging, until
+        RevenueCat), `none` everywhere else — show the plans, and say buying is
+        not available yet. Each product carries `features`: what the plan adds
+        over free, in words, written from the entitlement matrix — so a feature
+        moved between tiers changes the paywall with no app release. Monthly and
+        yearly of one tier list the same features."
       security: []
       responses:
         "200":
@@ -8814,7 +8859,7 @@ paths:
         subscription is still active until its period ends, and one in billing
         retry still entitles. Purchasing happens outside this API, so there is
         no endpoint here that starts one — this reports what the backend has
-        been told."
+        been told. The one exception is the staging-only test purchase below."
       security:
         - bearerAuth: []
       responses:
@@ -8836,6 +8881,172 @@ paths:
                 error:
                   code: AUTH_TOKEN_INVALID
                   message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/subscriptions/test-purchase:
+    post:
+      tags:
+        - Subscriptions
+      summary: Test purchase (staging only)
+      description: "STAGING ONLY, until RevenueCat. Grants the named plan to the
+        caller at once, with no payment taken, and answers exactly as GET
+        /subscriptions/me does. The plan replaces any test plan the caller
+        already holds — switching down works — and never touches a store
+        subscription. Monthly and yearly run a calendar month or year and do not
+        renew. Only where `purchase_mode` is `test`: everywhere else this
+        answers the same 404 as a path that does not exist, and production
+        refuses to start with it on. The body names a product slug and nothing
+        else — no user, tier or price."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+              required:
+                - product
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+    delete:
+      tags:
+        - Subscriptions
+      summary: End the test plan (staging only)
+      description: "STAGING ONLY. Ends every test plan the caller holds, at once —
+        unlike a store cancellation, which keeps access to the end of the
+        period, because nothing was paid for and the point is to see the tier
+        below. Store subscriptions are untouched. Idempotent: with nothing to
+        end it still answers 200 with the current state. 404 wherever test
+        purchases are off."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
                   details: null
         "429":
           description: RATE_LIMITED — Too many requests. Please try again shortly.
@@ -9994,9 +10205,14 @@ paths:
         always returns metres. show_distance false makes distance_metres null
         for everyone else (deck cards, profiles). show_last_active false makes
         is_online false and last_active_at null everywhere others see you, and
-        your matches get one presence update saying so. Incognito,
-        global_verified_only and pause_new_matches are stored but not applied
-        yet.
+        your matches get one presence update saying so. incognito true shows you
+        only to people you have liked, in the mode you liked them in, and to
+        your matches; everyone else stops finding you in decks and gets 404 for
+        your profile. global_verified_only true shows you only verified people
+        in every mode, and rebuilds the decks built today. pause_new_matches
+        true keeps you visible but refuses your likes with NEW_MATCHES_PAUSED
+        and makes no new match; turning it off makes the matches it held back,
+        and announces them.
       security:
         - bearerAuth: []
       requestBody:
@@ -10484,6 +10700,8 @@ components:
                 - USER_BLOCKED
                 - NOT_FOUND
                 - CONFLICT
+                - NEW_MATCHES_PAUSED
+                - ALREADY_MATCHED
                 - FILE_TOO_LARGE
                 - UNSUPPORTED_MEDIA_TYPE
                 - QUOTA_EXCEEDED

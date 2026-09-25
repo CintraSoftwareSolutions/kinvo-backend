@@ -34,11 +34,37 @@ export function matchExpiryFrom(now: Date = new Date()): Date {
 export const LIKE_ACTIONS: SwipeAction[] = [SwipeAction.like, SwipeAction.super_like];
 
 /**
+ * Holds the pair's lock until the caller's transaction ends.
+ *
+ * Everything that can make a match for one pair in one mode, or take away the
+ * like it rests on, takes this first: a like, the matches a pause held back,
+ * and rewind. Without it, READ COMMITTED lets two likes that land together
+ * each miss the other's uncommitted row: both commit, neither makes the match,
+ * and the pair can never swipe on each other again to get one. And a rewind
+ * could delete a like in the instant the other person was matching it.
+ *
+ * An advisory lock rather than a row lock, because there is no row to lock
+ * until the match exists. Keyed on the ordered pair and the mode, so swipes
+ * between other people never wait for it; transaction-scoped, so commit or
+ * rollback always releases it. Taking it twice in one transaction is harmless.
+ */
+export async function lockPair(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  otherUserId: string,
+  mode: Mode,
+): Promise<void> {
+  const [userAId, userBId] = orderPair(userId, otherUserId);
+  const key = `match:${userAId}:${userBId}:${mode}`;
+
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+}
+
+/**
  * Creates a match when the target has already liked the actor IN THE SAME MODE.
  *
  * Runs inside the caller's transaction so a match and the swipe that caused it
- * commit together. A match that exists without its swipe would be un-rewindable
- * and would reappear in nobody's deck.
+ * commit together.
  *
  * Returns null when there is no reciprocal like — the ordinary case.
  */
@@ -47,6 +73,10 @@ export async function createMatchIfMutual(
   options: { actorId: string; targetId: string; mode: Mode; isSuperLike: boolean },
 ): Promise<MatchModel | null> {
   const { actorId, targetId, mode, isSuperLike } = options;
+
+  // Before anything is read, so the reciprocal like below is read after every
+  // other transaction on this pair has committed (see `lockPair`).
+  await lockPair(tx, actorId, targetId, mode);
 
   // Mode-scoped deliberately: a like in `dating` must never complete a match in
   // `networking`. This is the single most important filter in the file.
@@ -67,9 +97,9 @@ export async function createMatchIfMutual(
     where: { user_a_id_user_b_id_mode: { user_a_id: userAId, user_b_id: userBId, mode } },
   });
 
-  // Two simultaneous likes both find a reciprocal one. The unique index is the
-  // real guard; this makes the second caller return the same match rather than
-  // raising a constraint violation the user would see as a failed swipe.
+  // The unique index is the last guard. Under the pair lock nothing should get
+  // this far with a match already made, but if something does, returning it
+  // beats a constraint violation the user would see as a failed swipe.
   if (existing) {
     return existing;
   }
@@ -117,24 +147,4 @@ export async function createMatchIfMutual(
   logger.info({ match_id: match.id, mode }, 'match created');
 
   return match;
-}
-
-/**
- * Removes the match a swipe created, for rewind.
- *
- * Deleting rather than soft-deleting: rewind restores the pre-swipe state, and
- * a lingering unmatched row would block the pair from ever matching again in
- * this mode through the unique index.
- */
-export async function deleteMatchForPair(
-  tx: Prisma.TransactionClient,
-  options: { actorId: string; targetId: string; mode: Mode },
-): Promise<boolean> {
-  const [userAId, userBId] = orderPair(options.actorId, options.targetId);
-
-  const deleted = await tx.match.deleteMany({
-    where: { user_a_id: userAId, user_b_id: userBId, mode: options.mode },
-  });
-
-  return deleted.count > 0;
 }

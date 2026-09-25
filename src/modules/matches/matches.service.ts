@@ -97,6 +97,27 @@ export async function isPairReachable(
 }
 
 /**
+ * Whether a match still shows among the viewer's matches, and opens from
+ * there: it has not been unmatched — which is also how a block ends one — and
+ * the other account is neither gone nor suspended. Expired and blocked-but-
+ * still-matched pairs stay listed; `isPairReachable` is what decides writing.
+ *
+ * The one rule behind the matches list, GET /matches/{id} and rewind's
+ * refusal, so a match reads as ended the same way everywhere, whatever the
+ * reason it ended (spec §4.4).
+ */
+export function isMatchListed(
+  match: { status: MatchStatus },
+  other: { deleted_at: Date | null; status: UserStatus },
+): boolean {
+  return (
+    match.status !== MatchStatus.unmatched &&
+    other.deleted_at === null &&
+    other.status === UserStatus.active
+  );
+}
+
+/**
  * USER_COMPACT_SELECT is the shared contract and deliberately carries no
  * account state, so the two fields needed to hide a match whose other side
  * left are added here rather than widening it for every caller.
@@ -186,10 +207,9 @@ export async function listMatches(viewerId: string, options: ListMatchesOptions)
   // Applied in memory rather than in the where clause: `visibleUserFilter`
   // shapes a User query and a match has two of them, so composing it here
   // would need a nested OR per side. The set is one page, never a table scan.
-  const visible = rows.filter((match) => {
-    const other = match.user_a_id === viewerId ? match.user_b : match.user_a;
-    return other.deleted_at === null && other.status === 'active';
-  });
+  const visible = rows.filter((match) =>
+    isMatchListed(match, match.user_a_id === viewerId ? match.user_b : match.user_a),
+  );
 
   const page = paginate(visible, options.limit, (match) => ({
     k: match.matched_at.toISOString(),
@@ -239,7 +259,7 @@ export async function getMatch(viewerId: string, matchId: string): Promise<Match
 
   const other = match.user_a_id === viewerId ? match.user_b : match.user_a;
 
-  if (other.deleted_at !== null || other.status !== 'active') {
+  if (!isMatchListed(match, other)) {
     throw ApiError.notFound();
   }
 

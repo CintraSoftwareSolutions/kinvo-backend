@@ -1867,6 +1867,54 @@ How each holds:
 The new error code is added, not renamed, per the table's own rule. The app
 offers "Resume" on it rather than a generic failure.
 
+### 2026-09-25 — Rewind never undoes a match
+
+Blocker 06 from the 14 Sep review, reachable since test purchases gave every
+staging account Premium, which includes rewind. Rewind undid the actor's last
+swipe in the mode and, if the pair had a match, DELETED it. The match row
+cascades to the conversation and its messages, the pair's plans and their
+call history, so one tap — days later, if that was still the last swipe —
+wiped all of it for both people, and the other person was told nothing. It
+also let someone send abuse and then erase it before it was reported. The
+comment defending the delete (a kept match would block re-matching through
+the unique index) had it backwards: `unmatch` keeps the row on purpose,
+because the report investigation needs `unmatched_by_id` and the row is what
+keeps the pair out of each other's decks.
+
+The product owner chose: **refuse, and offer Unmatch.** A swipe whose pair has
+a match in that mode, in any state, is not undone. Rewind answers a new code,
+`ALREADY_MATCHED` (409), and nothing changes. `details.match_id` carries the
+match while `isMatchListed` holds — the same rule the matches list and
+`GET /matches/{id}` now share — so the app can offer Unmatch, which is how a
+match ends. Once the match has ended it is null, and the answer is identical
+whether it was unmatched, blocked, or the other account is gone or suspended:
+anything more would confirm a block by elimination. A like that has not
+matched can still be taken back, which is what rewind is for. The rejected
+alternative, only undoing passes (Bumble, Hinge), would lose that.
+
+`match_removed` stays in the answer, always false: app builds from before
+today read it strictly and could not decode an answer without it.
+
+**The race behind it, and a second one.** Refusing on a match only holds if
+the check cannot run between the other person's like-back making the match
+and committing it. Under READ COMMITTED it could: the rewind saw no match,
+deleted the like, and the like-back then committed a match resting on a like
+that no longer existed. The same gap lost matches outright: two people liking
+each other at the same moment each read the other's like as not there yet,
+both committed, and neither got a match — nor ever could, a swipe being
+unique per pair and mode.
+
+`lockPair` closes both: a transaction-scoped advisory lock on the ordered pair
+and mode, taken by `createMatchIfMutual` before it reads anything, by rewind
+before it checks, and by `matchLikesHeldByPause` before its own check. An
+advisory lock because there is no row to lock until the match exists; keyed
+per pair and mode so nothing else waits on it; transaction-scoped so commit
+or rollback always releases it. It costs one statement per like. Both races
+have tests that hold one side's transaction open while the other arrives.
+
+A second rewind of the same swipe (a double tap) used to hit Prisma's P2025
+and answer 500. It now answers 409 CONFLICT.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

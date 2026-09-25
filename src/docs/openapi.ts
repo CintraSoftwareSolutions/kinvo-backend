@@ -534,9 +534,9 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Discovery',
     summary: 'Undo the last swipe in this mode',
     description:
-      'Restores the profile to the deck and refunds the quota it spent. If that swipe had created a match, the match is removed too. Premium.',
+      'Restores the profile to the deck and refunds the quota it spent. Premium. A swipe that became a match is never undone: that answers 409 ALREADY_MATCHED, and nothing changes. Its `details.match_id` is the match while it is still on your list — offer Unmatch, which is how a match ends — and null once it has ended, the same whatever ended it. `match_removed` is always false, and kept only for older app builds. 409 CONFLICT when another request already rewound the same swipe.',
     auth: true,
-    errors: [E.PREMIUM_REQUIRED, E.NOT_FOUND, E.VALIDATION_FAILED],
+    errors: [E.PREMIUM_REQUIRED, E.NOT_FOUND, E.ALREADY_MATCHED, E.CONFLICT, E.VALIDATION_FAILED],
   },
   {
     method: 'get',

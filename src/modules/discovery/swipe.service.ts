@@ -5,9 +5,10 @@ import { consumeQuota, refundQuota } from '@modules/entitlements/quota.service';
 import {
   LIKE_ACTIONS,
   createMatchIfMutual,
-  deleteMatchForPair,
+  lockPair,
   orderPair,
 } from '@modules/matches/match.service';
+import { isMatchListed } from '@modules/matches/matches.service';
 import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
 import { assertVisible, getBlockedUserIds, visibleUserFilter } from '@modules/safety/block.service';
 import { ApiError } from '@utils/api-error';
@@ -189,17 +190,24 @@ export async function swipe(
 export interface RewindResult {
   restored_user_id: string;
   action: SwipeAction;
-  match_removed: boolean;
+  /**
+   * Always false: rewind never removes a match (DECISIONS.md, 25 Sep 2026).
+   * Kept because app builds from before then cannot read an answer without it.
+   */
+  match_removed: false;
 }
 
 /**
  * Reverses the last swipe in this mode, restoring the profile to the deck
  * (spec §5.3).
  *
- * If that swipe created a match, the match goes too. The alternative — keeping
- * a match whose originating swipe no longer exists — leaves a conversation
- * neither person can trace and a pair that can never re-match, because the
- * unique index still holds the row.
+ * Never a swipe that became a match (DECISIONS.md, 25 Sep 2026). Removing the
+ * match took the other person's chat, plans and call history with it, without
+ * a word to them, and anything in it they might have reported. Unmatch is how
+ * a match ends: it tells the other side, closes the pair's plans, and keeps the
+ * row a report investigation needs. So a matched swipe answers ALREADY_MATCHED,
+ * with the match's id while the viewer can still open it, for the app to offer
+ * Unmatch.
  */
 export async function rewind(userId: string, mode: Mode): Promise<RewindResult> {
   await requireEnabledMode(userId, mode);
@@ -207,7 +215,8 @@ export async function rewind(userId: string, mode: Mode): Promise<RewindResult> 
 
   const last = await prisma.swipe.findFirst({
     where: { actor_id: userId, mode },
-    orderBy: { created_at: 'desc' },
+    // `id` settles two swipes made in the same millisecond.
+    orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     select: { id: true, target_id: true, action: true },
   });
 
@@ -215,11 +224,20 @@ export async function rewind(userId: string, mode: Mode): Promise<RewindResult> 
     throw ApiError.notFound('There is nothing to rewind in this mode.');
   }
 
-  const matchRemoved = await prisma.$transaction(async (tx) => {
-    await tx.swipe.delete({ where: { id: last.id } });
-    await restoreDeckEntry(tx, userId, mode, last.target_id);
+  await prisma.$transaction(async (tx) => {
+    // First, so a like-back already in flight has either made its match, and
+    // this is refused below, or waits for this to commit and finds the like
+    // gone. Checked any earlier, the match could appear in between.
+    await lockPair(tx, userId, last.target_id, mode);
+    await refuseIfMatched(tx, userId, last.target_id, mode);
 
-    return deleteMatchForPair(tx, { actorId: userId, targetId: last.target_id, mode });
+    const deleted = await tx.swipe.deleteMany({ where: { id: last.id } });
+    if (deleted.count === 0) {
+      // Another request rewound it first: a double tap.
+      throw new ApiError(ERROR_CODES.CONFLICT, 'That swipe was already rewound.');
+    }
+
+    await restoreDeckEntry(tx, userId, mode, last.target_id);
   });
 
   // The swipe no longer exists, so the allowance it spent is given back.
@@ -227,9 +245,42 @@ export async function rewind(userId: string, mode: Mode): Promise<RewindResult> 
     await refundQuota(userId, 'swipes');
   }
 
-  logger.info({ user_id: userId, mode, match_removed: matchRemoved }, 'swipe rewound');
+  logger.info({ user_id: userId, mode }, 'swipe rewound');
 
-  return { restored_user_id: last.target_id, action: last.action, match_removed: matchRemoved };
+  return { restored_user_id: last.target_id, action: last.action, match_removed: false };
+}
+
+/**
+ * Refuses a rewind when the pair has a match in this mode, whatever its state.
+ *
+ * The id goes back only while the match is still on the viewer's list, the
+ * same rule as the list itself. An ended match answers `match_id: null`, the
+ * same whether it was unmatched, blocked, or the other account is gone:
+ * anything more would tell a block apart by elimination (spec §4.4).
+ */
+async function refuseIfMatched(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  otherId: string,
+  mode: Mode,
+): Promise<void> {
+  const [userAId, userBId] = orderPair(userId, otherId);
+  const participant = { select: { deleted_at: true, status: true } } as const;
+
+  const match = await tx.match.findUnique({
+    where: { user_a_id_user_b_id_mode: { user_a_id: userAId, user_b_id: userBId, mode } },
+    select: { id: true, status: true, user_a: participant, user_b: participant },
+  });
+
+  if (!match) {
+    return;
+  }
+
+  const other = userAId === otherId ? match.user_a : match.user_b;
+
+  throw new ApiError(ERROR_CODES.ALREADY_MATCHED, undefined, {
+    match_id: isMatchListed(match, other) ? match.id : null,
+  });
 }
 
 export interface LikeReceived {
@@ -444,6 +495,10 @@ export async function matchLikesHeldByPause(userId: string): Promise<number> {
     if (!ownModes.has(mode) || !theirModes.get(otherId)?.has(mode)) continue;
 
     const match = await prisma.$transaction(async (tx) => {
+      // Before the check below, or a like-back or a rewind could change the
+      // answer between reading it and acting on it.
+      await lockPair(tx, userId, otherId, mode);
+
       // A pair that has had a match — even one that has since ended — is never
       // matched again by this. Unmatching is a decision; this is not a path
       // around it.

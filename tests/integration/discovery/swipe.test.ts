@@ -2,6 +2,7 @@ import { API_PREFIX } from '@config/constants';
 import { Mode, prisma } from '@/db/prisma';
 import { ENTITLEMENT_KEYS } from '@modules/entitlements/entitlements.types';
 import { resetQuotas } from '@modules/entitlements/quota.service';
+import { createMatchIfMutual } from '@modules/matches/match.service';
 import type { AuthTokens } from '@modules/auth/auth.types';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader } from '../../helpers/auth';
@@ -442,20 +443,105 @@ describe('POST /discovery/:mode/rewind', () => {
     expect(back.body.data[0].user.id).toBe(target.user.id);
   });
 
-  it('removes the match the rewound swipe created', async () => {
+  it('never undoes a swipe that became a match', async () => {
     const a = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
     const b = await createDiscoverableViewer({ mode: Mode.dating, coordinates: CAMDEN });
     await setTier(a.user_id, 'basic');
 
-    await likeEachOther(a, b, Mode.dating);
-    expect(await prisma.match.count()).toBe(1);
+    const liked = await likeEachOther(a, b, Mode.dating);
+    const matchId = liked.body.data.match.id as string;
 
     const response = await api.post(REWIND('dating')).set(authHeader(a.tokens));
 
-    // Keeping the match would leave a conversation neither person can trace,
-    // and the unique index would stop the pair ever re-matching in this mode.
-    expect(response.body.data.match_removed).toBe(true);
-    expect(await prisma.match.count()).toBe(0);
+    // Removing it took B's chat, plans and calls with it, unannounced. The id
+    // is what the app offers Unmatch with.
+    expect(response.status).toBe(409);
+    expectErrorEnvelope(response.body, 'ALREADY_MATCHED');
+    expect(response.body.error.details).toEqual({ match_id: matchId });
+
+    expect(await prisma.match.count({ where: { id: matchId } })).toBe(1);
+    expect(await prisma.conversation.count({ where: { match_id: matchId } })).toBe(1);
+    expect(await prisma.swipe.count({ where: { actor_id: a.user_id } })).toBe(1);
+  });
+
+  it("refuses too when it was the other person's like that made the match", async () => {
+    const a = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const b = await createDiscoverableViewer({ mode: Mode.dating, coordinates: CAMDEN });
+    await setTier(a.user_id, 'basic');
+
+    await api
+      .post(SWIPE('dating'))
+      .set(authHeader(a.tokens))
+      .send({ target_id: b.user_id, action: 'like' });
+    const matched = await api
+      .post(SWIPE('dating'))
+      .set(authHeader(b.tokens))
+      .send({ target_id: a.user_id, action: 'like' });
+    expect(matched.body.data.is_match).toBe(true);
+
+    const response = await api.post(REWIND('dating')).set(authHeader(a.tokens));
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.details).toEqual({ match_id: matched.body.data.match.id });
+    expect(await prisma.match.count()).toBe(1);
+  });
+
+  it('gives no match id once the match has ended, the same whatever ended it', async () => {
+    type Pair = Awaited<ReturnType<typeof createDiscoverableViewer>>;
+
+    async function rewindAfter(end: (a: Pair, b: Pair, matchId: string) => Promise<unknown>) {
+      const a = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+      const b = await createDiscoverableViewer({ mode: Mode.dating, coordinates: CAMDEN });
+      await setTier(a.user_id, 'basic');
+
+      const liked = await likeEachOther(a, b, Mode.dating);
+      await end(a, b, liked.body.data.match.id as string);
+
+      const response = await api.post(REWIND('dating')).set(authHeader(a.tokens));
+      return { status: response.status, body: response.body as unknown };
+    }
+
+    const unmatched = await rewindAfter((_a, b, matchId) =>
+      api.delete(`${API_PREFIX}/matches/${matchId}`).set(authHeader(b.tokens)),
+    );
+    const blocked = await rewindAfter((a, b) =>
+      api.post(`${API_PREFIX}/blocks`).set(authHeader(b.tokens)).send({ user_id: a.user_id }),
+    );
+    const suspended = await rewindAfter((_a, b) =>
+      prisma.user.update({ where: { id: b.user_id }, data: { status: 'suspended' } }),
+    );
+
+    expect(unmatched.status).toBe(409);
+    expect(unmatched.body).toMatchObject({
+      error: { code: 'ALREADY_MATCHED', details: { match_id: null } },
+    });
+    // Byte-identical: telling these apart confirms a block by elimination.
+    expect(blocked).toEqual(unmatched);
+    expect(suspended).toEqual(unmatched);
+    // And nothing was undone in any of them.
+    expect(await prisma.swipe.count()).toBe(6);
+  });
+
+  it('answers a second rewind of the same swipe without a server error', async () => {
+    const viewer = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    await setTier(viewer.user_id, 'basic');
+    const target = await createDiscoverableUser({ mode: Mode.dating, coordinates: CAMDEN });
+
+    await api
+      .post(SWIPE('dating'))
+      .set(authHeader(viewer.tokens))
+      .send({ target_id: target.user.id, action: 'pass' });
+
+    // A double tap. Whichever comes second finds the swipe already gone.
+    const responses = await Promise.all([
+      api.post(REWIND('dating')).set(authHeader(viewer.tokens)),
+      api.post(REWIND('dating')).set(authHeader(viewer.tokens)),
+    ]);
+    const [first, second] = responses.map((response) => response.status).sort((x, y) => x - y);
+
+    expect(first).toBe(200);
+    expect([404, 409]).toContain(second);
+    expect(await prisma.swipe.count()).toBe(0);
   });
 
   it('gives the swipe allowance back', async () => {
@@ -506,5 +592,92 @@ describe('POST /discovery/:mode/rewind', () => {
 
     expect(response.status).toBe(404);
     expect(await prisma.swipe.count()).toBe(1);
+  });
+});
+
+/**
+ * One pair, two things at once. Each test holds one side's transaction open,
+ * lock taken and nothing committed, while the other side arrives over the API.
+ * Without `lockPair` the second side reads the pair as it was before the first
+ * began, and both commit something inconsistent.
+ */
+describe('one pair, two things at once', () => {
+  /** Long enough for the other request to finish, were it not made to wait. */
+  const HOLD_MS = 500;
+  const hold = () => new Promise((resolve) => setTimeout(resolve, HOLD_MS));
+
+  it('matches two people who like each other at the same moment', async () => {
+    const a = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const b = await createDiscoverableViewer({ mode: Mode.dating, coordinates: CAMDEN });
+
+    // A's like is written but not committed when B's lands. Unlocked, B read no
+    // like from A, A had read none from B, and the pair never matched — nor
+    // could they, having both swiped.
+    const { pending } = await prisma.$transaction(async (tx) => {
+      await tx.swipe.create({
+        data: { actor_id: a.user_id, target_id: b.user_id, mode: Mode.dating, action: 'like' },
+      });
+      const early = await createMatchIfMutual(tx, {
+        actorId: a.user_id,
+        targetId: b.user_id,
+        mode: Mode.dating,
+        isSuperLike: false,
+      });
+      expect(early).toBeNull();
+
+      const pending = api
+        .post(SWIPE('dating'))
+        .set(authHeader(b.tokens))
+        .send({ target_id: a.user_id, action: 'like' })
+        .then((response) => response);
+      await hold();
+      return { pending };
+    });
+
+    const response = await pending;
+
+    expect(response.body.data.is_match).toBe(true);
+    expect(await prisma.match.count()).toBe(1);
+  });
+
+  it('makes a rewind wait for a like-back in flight, then refuses it', async () => {
+    const a = await createDiscoverableViewer({ mode: Mode.dating, coordinates: LONDON });
+    const b = await createDiscoverableViewer({ mode: Mode.dating, coordinates: CAMDEN });
+    await setTier(a.user_id, 'basic');
+
+    await api
+      .post(SWIPE('dating'))
+      .set(authHeader(a.tokens))
+      .send({ target_id: b.user_id, action: 'like' });
+
+    // B's like-back has made the match but not committed it when A rewinds.
+    // Unlocked, the rewind saw no match yet and deleted A's like, and B then
+    // committed a match resting on a like that no longer existed.
+    const { pending } = await prisma.$transaction(async (tx) => {
+      await tx.swipe.create({
+        data: { actor_id: b.user_id, target_id: a.user_id, mode: Mode.dating, action: 'like' },
+      });
+      const match = await createMatchIfMutual(tx, {
+        actorId: b.user_id,
+        targetId: a.user_id,
+        mode: Mode.dating,
+        isSuperLike: false,
+      });
+      expect(match).not.toBeNull();
+
+      const pending = api
+        .post(REWIND('dating'))
+        .set(authHeader(a.tokens))
+        .then((response) => response);
+      await hold();
+      return { pending };
+    });
+
+    const response = await pending;
+
+    expect(response.status).toBe(409);
+    expectErrorEnvelope(response.body, 'ALREADY_MATCHED');
+    expect(await prisma.swipe.count({ where: { actor_id: a.user_id } })).toBe(1);
+    expect(await prisma.match.count()).toBe(1);
   });
 });
