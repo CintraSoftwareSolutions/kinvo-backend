@@ -4,44 +4,6 @@ import { prisma } from '@/db/prisma';
 import { pruneExpiredLiveLocations } from '@/db/geo';
 import { logger } from '@utils/logger';
 
-/**
- * Erasure on account deletion (spec §5.7, Batch 12).
- *
- * Closes the debt recorded in DECISIONS.md §1.2c: until now deletion was a soft
- * delete that scrubbed nothing, which meant the product promised erasure and
- * retained everything.
- *
- * THE TENSION THIS FILE RESOLVES. Two obligations pull opposite ways:
- *
- *   Erasure — a deleted user's personal data must go.
- *   Safety  — a report about someone who deletes their account must survive,
- *             or deletion becomes the way to erase your own misconduct record.
- *
- * The resolution is that IDENTIFYING data is destroyed and SAFETY records are
- * kept, pointing at a row that no longer says who it was. A moderator can still
- * see that an account was reported three times for harassment; nobody can work
- * out whose account it was.
- *
- * What is destroyed:
- *   name, date of birth, bio, prompts, photos, location, auth identities,
- *   device records, push tokens, trusted contacts, live location trails,
- *   notification history, message bodies.
- *
- * What is kept:
- *   reports (both filed and received), moderation flags and checks, the
- *   existence of matches and messages, subscription and payment records.
- *
- * Payment records are kept because tax law requires it, and that obligation
- * outranks an erasure request in every jurisdiction this ships to.
- */
-
-/**
- * Replaces identity with a value that cannot be reversed or correlated.
- *
- * A random token per field, not a hash of the original: a hash of an email
- * address is still an email address to anyone holding a list to check against,
- * which is exactly how "anonymised" datasets get de-anonymised.
- */
 function tombstone(prefix: string): string {
   return `${prefix}_${randomUUID()}`;
 }
@@ -55,12 +17,6 @@ export interface ErasureResult {
   messages_scrubbed: number;
 }
 
-/**
- * Scrubs a deleted account.
- *
- * Runs AFTER the soft delete, in its own transaction, and is idempotent — a
- * retry on an already-scrubbed account changes nothing rather than failing.
- */
 export async function erasePersonalData(userId: string): Promise<ErasureResult> {
   const result = await prisma.$transaction(async (tx) => {
     // --- identity ---------------------------------------------------------

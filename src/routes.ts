@@ -21,13 +21,8 @@ import { modesRouter } from '@modules/modes/modes.routes';
 import { devicesRouter, settingsRouter } from '@modules/settings/settings.routes';
 import { onboardingRouter, usersRouter } from '@modules/users/users.routes';
 
-/**
- * Every versioned route mounts here. Module routers are added batch by batch.
- */
 export const apiRouter: Router = Router();
 
-// Documentation first, and deliberately outside the versioned resource
-// routes: /docs describes v1 but is not part of the v1 contract.
 if (env.DOCS_ENABLED) {
   apiRouter.use('/docs', docsRouter);
 }
@@ -54,8 +49,6 @@ apiRouter.use('/venues', venuesRouter);
 apiRouter.use('/subscriptions', subscriptionsRouter);
 apiRouter.use('/calls', callsRouter);
 
-// Provider callbacks, mounted apart from everything else: they carry no bearer
-// token, and their signature is what authenticates them.
 apiRouter.use('/webhooks', callsWebhookRouter);
 apiRouter.use('/settings', settingsRouter);
 apiRouter.use('/devices', devicesRouter);

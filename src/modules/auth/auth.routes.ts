@@ -28,14 +28,6 @@ import {
   verifyOtpSchema,
 } from './auth.schema';
 
-/**
- * Auth routes (spec §7, Batch 2).
- *
- * Rate limits sit on the endpoints that are attacked or that cost money:
- * sign-in (credential stuffing), registration (bulk account creation), OTP
- * (each SMS is billed), and password reset (mailbox flooding). These are
- * infrastructure limits returning 429 — never business quotas (spec §4.9).
- */
 export const authRouter: Router = Router();
 
 authRouter.post(

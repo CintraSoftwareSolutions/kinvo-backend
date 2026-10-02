@@ -2,14 +2,6 @@ import { z } from 'zod';
 
 import { MAX_INTERESTS, MAX_PROMPTS } from '@modules/profiles/profiles.service';
 
-/**
- * Zod schemas for the profile and onboarding endpoints (spec §0.5).
- *
- * Optional-and-nullable throughout: PATCH semantics need three states — absent
- * means "leave it alone", null means "clear it", and a value means "set it".
- * Using only optional would make clearing a field impossible.
- */
-
 const nullableString = (max: number, message: string) =>
   z.string().trim().max(max, message).nullable().optional();
 

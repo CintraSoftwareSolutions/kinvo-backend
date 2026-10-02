@@ -5,13 +5,6 @@ import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 
-/**
- * Twilio Verify (spec §2). Twilio generates, stores, and checks the code — we
- * never see or persist it, which keeps OTP secrets out of our database entirely.
- *
- * Behind an interface so tests mock this boundary and nothing below it.
- */
-
 export interface OtpSendResult {
   status: string;
 }
@@ -30,19 +23,6 @@ function hasCredentials(): boolean {
   return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID);
 }
 
-/**
- * Twilio failures that are about the number or the code rather than about
- * Twilio, turned into the error the caller should actually see.
- *
- * Both kinds arrive as the same exception, and treating all of them as an
- * outage told people to "try again shortly" when their number simply could not
- * receive a text — advice that can never work, on a screen they cannot get
- * past. Returns null when the failure really is Twilio's.
- *
- * Codes: https://www.twilio.com/docs/api/errors
- *
- * Exported so the mapping can be tested without a Twilio account.
- */
 export function twilioRefusal(error: unknown): ApiError | null {
   const { status, code } = (error ?? {}) as { status?: number; code?: number };
 
@@ -79,33 +59,12 @@ export function twilioRefusal(error: unknown): ApiError | null {
   return status === 429 ? new ApiError(ERROR_CODES.RATE_LIMITED) : null;
 }
 
-/**
- * What to log about a refusal.
- *
- * NOT the exception: Twilio puts the number in its message ("Invalid parameter
- * `To`: +44…"), and the redaction in logger.ts covers fields, not text inside
- * one. The code is what identifies the problem anyway; the last four digits are
- * enough to recognise a report.
- */
 function describeRefusal(error: unknown, phone: string) {
   const { status, code } = (error ?? {}) as { status?: number; code?: number };
 
   return { twilio_code: code, twilio_status: status, phone_suffix: phone.slice(-4) };
 }
 
-/**
- * Failures that are about THIS Twilio account rather than about the number.
- *
- * Kept apart from {@link twilioRefusal} because they are nobody's fault but
- * ours, and because the honest thing to tell someone is not "try again
- * shortly" — it will fail identically every time until an operator fixes the
- * account. The app offers email sign-in, so that is what to point at.
- *
- * - 21608: no approved compliance profile, so only numbers verified in the
- *   Twilio console can be texted. This is what staging hit on 22 Sep 2026.
- * - 21408: that country is switched off in the account's geo permissions,
- *   which is the usual next surprise once 21608 is cleared.
- */
 function accountCannotText(error: unknown): ApiError | null {
   const { code } = (error ?? {}) as { code?: number };
 
@@ -189,19 +148,6 @@ const twilioProvider: OtpProvider = {
   },
 };
 
-/**
- * Development stand-in for machines without Twilio credentials.
- *
- * Selected when Twilio is unconfigured AND the integration waiver is on. In a
- * real production deployment the waiver is at its default of `true`, so env
- * validation makes all three Twilio variables mandatory and this object can
- * never be reached — an OTP bypass in production would be catastrophic.
- *
- * It IS reachable wherever the waiver is on and the credentials are absent:
- * a developer's machine, CI, and a staging box whose Twilio parameters have not
- * been filled in. Staging's were filled in on 22 Sep 2026, so staging now sends
- * real texts and this stub is for local work.
- */
 const DEV_CODE = '000000';
 
 const stubProvider: OtpProvider = {

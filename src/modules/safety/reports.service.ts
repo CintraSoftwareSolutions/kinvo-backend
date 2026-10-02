@@ -5,18 +5,6 @@ import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 import { blockUser } from './blocks.service';
 
-/**
- * Reports (spec §5.7, Batch 12).
- *
- * THE RULE THAT SHAPES THIS FILE: reports are ANONYMOUS. The reported user must
- * never learn who reported them through any endpoint, notification, or error
- * message.
- *
- * That is why nothing here returns a report to the person it is about, why the
- * moderation queue is the only read path, and why submitting a report answers
- * the same way whether or not the target has already been reported — a
- * different response would let someone probe who has reports against them.
- */
 
 export interface CreateReportInput {
   reporterId: string;
@@ -25,9 +13,7 @@ export interface CreateReportInput {
   description?: string;
   contextType?: string;
   contextId?: string;
-  /** spec §5.7: blocks atomically on submit. */
   alsoBlock?: boolean;
-  /** Completed uploads of kind `report_evidence`. */
   evidenceAssetIds?: string[];
 }
 
@@ -40,14 +26,6 @@ export interface ReportView {
   created_at: string;
 }
 
-/**
- * Files a report, optionally blocking in the same transaction.
- *
- * "Atomically" in the spec is load-bearing: someone reporting harassment and
- * ticking block must not end up with the report filed and the block missing
- * because a write failed in between. They are one transaction or neither
- * happens.
- */
 export async function createReport(input: CreateReportInput): Promise<ReportView> {
   if (input.reporterId === input.reportedId) {
     throw ApiError.validation({ reported_id: ['You cannot report yourself.'] });
@@ -57,18 +35,10 @@ export async function createReport(input: CreateReportInput): Promise<ReportView
     where: { id: input.reportedId, deleted_at: null },
     select: { id: true },
   });
-
-  // 404 for a user who does not exist, is deleted, or was never visible. NOT
-  // filtered by the block clause: someone must be able to report a person they
-  // have already blocked, which is the most common order of events.
   if (!target) {
     throw ApiError.notFound();
   }
 
-  // Evidence is claimed BEFORE the transaction. claimAsset checks ownership,
-  // completion, and kind together, so a verification document can never be
-  // attached as report evidence — and a failure here must not leave a report
-  // half-written.
   const evidenceIds: string[] = [];
 
   for (const assetId of input.evidenceAssetIds ?? []) {
@@ -120,13 +90,6 @@ export async function createReport(input: CreateReportInput): Promise<ReportView
   };
 }
 
-/**
- * The reports this user has FILED. Never the reports about them.
- *
- * There is deliberately no endpoint that lists reports against a user. Even
- * a count would tell someone they are under review, which is enough to change
- * behaviour before a moderator looks.
- */
 export async function listMyReports(
   reporterId: string,
   options: { limit: number; cursor?: string },
@@ -190,12 +153,6 @@ export interface AdminReportView extends ReportView {
   resolution_note: string | null;
 }
 
-/**
- * The moderation queue's view, which DOES include the reporter.
- *
- * Moderators need it to spot coordinated reporting and retaliation. This is the
- * only place the reporter's identity is returned, and it is behind a role gate.
- */
 export async function listReportsForReview(options: {
   limit: number;
   cursor?: string;
@@ -229,8 +186,6 @@ export async function listReportsForReview(options: {
   };
 }
 
-/** Typed to what it reads rather than the full row, so callers stay free to
- * select only the evidence ids they need. */
 function toAdminView(report: ReportRow): AdminReportView {
   return {
     id: report.id,

@@ -7,15 +7,6 @@ import { isDeviceSignedOut } from '@modules/settings/devices.service';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 
-/**
- * Bearer token authentication (spec §4.3).
- *
- * The three failure codes stay distinct because the app behaves differently for
- * each: AUTH_REQUIRED sends the user to sign-in, AUTH_TOKEN_EXPIRED triggers a
- * silent refresh and retry, AUTH_TOKEN_INVALID logs them out. A generic 401
- * forces the client to guess, and the usual guess is wrong for the middle case.
- */
-
 function extractBearerToken(req: Request): string | null {
   const header = req.header('authorization');
 
@@ -32,12 +23,6 @@ function extractBearerToken(req: Request): string | null {
   return token.trim() || null;
 }
 
-/**
- * Loads the user on every request rather than trusting claims baked into the
- * token. An access token lives 30 minutes; a suspension, deletion, completed
- * onboarding, or the device being signed out inside that window must take
- * effect immediately, not when the token happens to expire.
- */
 async function loadUser(payload: AccessTokenPayload): Promise<AuthenticatedUser> {
   const [user, deviceSignedOut] = await Promise.all([
     prisma.user.findUnique({
@@ -54,8 +39,6 @@ async function loadUser(payload: AccessTokenPayload): Promise<AuthenticatedUser>
     payload.did ? isDeviceSignedOut(payload.sub, payload.did) : false,
   ]);
 
-  // A token for a user who no longer exists, or from a device that was signed
-  // out, is invalid, not "not found" — the client should log out.
   if (!user || user.deleted_at || deviceSignedOut) {
     throw new ApiError(ERROR_CODES.AUTH_TOKEN_INVALID);
   }
@@ -83,7 +66,6 @@ export const authenticate: RequestHandler = (req, _res, next) => {
     return;
   }
 
-  // verifyAccessToken throws AUTH_TOKEN_EXPIRED or AUTH_TOKEN_INVALID.
   Promise.resolve()
     .then(async () => {
       req.user = await loadUser(verifyAccessToken(token));
@@ -92,13 +74,6 @@ export const authenticate: RequestHandler = (req, _res, next) => {
     .catch(next);
 };
 
-/**
- * Attaches the user when a valid token is present and does nothing otherwise.
- *
- * A bad token is ignored rather than rejected: these routes work for signed-out
- * callers, so a stale token should degrade to the anonymous experience rather
- * than turn a public page into an error.
- */
 export const optionalAuth: RequestHandler = (req, _res, next) => {
   const token = extractBearerToken(req);
 
@@ -113,7 +88,6 @@ export const optionalAuth: RequestHandler = (req, _res, next) => {
     })
     .then(() => next())
     .catch((error: unknown) => {
-      // A suspension is still worth surfacing — it is not "merely signed out".
       if (error instanceof ApiError && error.code === ERROR_CODES.ACCOUNT_SUSPENDED) {
         next(error);
         return;
@@ -121,12 +95,6 @@ export const optionalAuth: RequestHandler = (req, _res, next) => {
       next();
     });
 };
-
-/**
- * Narrows `req.user` for handlers behind `authenticate`, so call sites do not
- * need a non-null assertion. Throwing here would mean the middleware chain was
- * assembled wrongly.
- */
 export function requireUser(req: Request): AuthenticatedUser {
   if (!req.user) {
     throw new ApiError(ERROR_CODES.AUTH_REQUIRED);

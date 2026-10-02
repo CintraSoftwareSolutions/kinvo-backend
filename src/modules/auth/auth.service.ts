@@ -139,28 +139,9 @@ export async function login(input: LoginInput): Promise<AuthTokens> {
 
 export interface PasswordResetRequest {
   code: string;
-  /**
-   * Whether this deployment has nowhere to send it — no mail transport at all,
-   * as on a developer's machine and in CI. The ONLY case where the code may be
-   * handed back to whoever asked.
-   *
-   * Not "it was not delivered": a provider that refuses one recipient has not
-   * delivered it either, and handing the code back then would mean anybody
-   * could have a reset code for any address the mail server happens to dislike.
-   */
   hasNowhereToSend: boolean;
 }
 
-/**
- * Refuses while the mail transport is known to be down.
- *
- * Only where a transport is configured at all: local development, CI, and a
- * staging box with no mail account run on the no-op provider, where the code
- * comes back in the response instead so the flow stays exercisable. A
- * deployment that HAS a transport gets the honest answer, staging included —
- * handing the code to the caller because email is broken would turn a password
- * reset into one anybody can complete for anybody.
- */
 function assertEmailTransportUsable(transport: EmailProvider): void {
   if (transport.isConfigured && !transport.isReady) {
     throw new ApiError(
@@ -174,10 +155,7 @@ export async function requestPasswordReset(rawEmail: string): Promise<PasswordRe
   const email = normaliseEmail(rawEmail);
   const transport = getEmailProvider();
 
-  // Checked BEFORE the address is looked up, and so before anything here knows
-  // whether it belongs to an account. An outage reported only to addresses that
-  // exist is an enumeration oracle wearing a 503, and refusing that question is
-  // the whole point of this endpoint.
+ 
   assertEmailTransportUsable(transport);
 
   const identity = await prisma.authIdentity.findUnique({
@@ -198,19 +176,6 @@ export async function requestPasswordReset(rawEmail: string): Promise<PasswordRe
     { user_id: identity.user.id, delivery: delivery.status },
     'password reset code issued',
   );
-
-  // A refused RECIPIENT is never reported — whether an address can receive mail
-  // is a fact about the address, and this endpoint answers nothing about
-  // addresses. A refused TRANSPORT is reported, because it is a fact about us,
-  // and "a reset code is on its way" when the transport just refused it is how
-  // staging spent its first weeks sending people to an inbox nothing had been
-  // sent to.
-  //
-  // This message is the one that discovered the outage, so the check above
-  // could not have caught it, and for this single request the refusal does
-  // depend on an account existing. It closes behind itself: the failure is now
-  // recorded, so every request after it — registered or not — is refused the
-  // same way until the transport recovers.
   if (delivery.status === 'unavailable') {
     assertEmailTransportUsable(transport);
   }
@@ -230,8 +195,6 @@ export async function resetPassword(
     select: { id: true, user: { select: { id: true, deleted_at: true } } },
   });
 
-  // An address with no account fails exactly as a wrong code does, at the same
-  // cost, or this endpoint answers the question forgot-password refuses to.
   if (!identity || identity.user.deleted_at) {
     await simulatePasswordVerification();
     throw invalidResetCode();
@@ -244,8 +207,7 @@ export async function resetPassword(
     data: { password_hash: await hashPassword(newPassword) },
   });
 
-  // A reset usually means the account was compromised, so every existing
-  // session dies with it. The user signs in again with the new password.
+ 
   await revokeAllTokensForUser(identity.user.id);
   await signOutAllDevices(identity.user.id);
 

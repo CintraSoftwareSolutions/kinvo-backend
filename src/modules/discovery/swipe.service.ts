@@ -21,23 +21,6 @@ import { notify } from '@modules/notifications/notifications.service';
 import { consumeDeckEntry, requireEnabledMode, restoreDeckEntry } from './deck.service';
 import { assertIncognitoAllows } from './incognito';
 
-/**
- * Swiping, rewind, and the likes-you inbox (spec §5.3, Batch 7).
- *
- * Swipe uniqueness is `(actor, target, mode)`. The same pair may like in one
- * mode and pass in another, and a mutual like only matches within the mode it
- * happened in.
- */
-
-/**
- * Which actions cost quota.
- *
- * Likes and super likes only. A pass costs nothing, because capping passes
- * strands a free user on a profile they do not want and extracts no value —
- * the cap exists to sell subscriptions, and nobody has ever paid to skip
- * someone faster. This reads the spec's "daily swipe cap" as a cap on the
- * actions that can lead to a match; see DECISIONS.md §1.2e.
- */
 const QUOTA_ACTIONS: SwipeAction[] = [SwipeAction.like, SwipeAction.super_like];
 
 export interface SwipeResult {
@@ -46,15 +29,6 @@ export interface SwipeResult {
   match: { id: string; mode: Mode; is_super_like: boolean; matched_at: string } | null;
   quota: { limit: number; used: number; remaining: number; is_unlimited: boolean };
 }
-
-/**
- * Confirms the target is swipeable in this mode.
- *
- * Everything that fails here answers 404, byte-identical to a user that never
- * existed (spec §4.4). A 403 would confirm the account is real, and "they
- * blocked you", "they are suspended" and "they left this mode" must be
- * indistinguishable from outside.
- */
 async function assertSwipeableTarget(actorId: string, targetId: string, mode: Mode): Promise<void> {
   if (actorId === targetId) {
     throw ApiError.validation({ target_id: ['You cannot swipe on yourself.'] });
@@ -80,13 +54,6 @@ async function assertSwipeableTarget(actorId: string, targetId: string, mode: Mo
   }
 }
 
-/**
- * Refuses a like from someone who has paused new matches (DECISIONS.md, 24
- * Sep 2026). Stopping new matches is the whole of what they asked for, and a
- * like is how one starts. Passing is still allowed: it starts nothing.
- *
- * Before the quota is touched, so a refused like costs nothing.
- */
 async function assertTakingNewMatches(userId: string): Promise<void> {
   const settings = await prisma.userSettings.findUnique({
     where: { user_id: userId },
@@ -190,25 +157,9 @@ export async function swipe(
 export interface RewindResult {
   restored_user_id: string;
   action: SwipeAction;
-  /**
-   * Always false: rewind never removes a match (DECISIONS.md, 25 Sep 2026).
-   * Kept because app builds from before then cannot read an answer without it.
-   */
   match_removed: false;
 }
 
-/**
- * Reverses the last swipe in this mode, restoring the profile to the deck
- * (spec §5.3).
- *
- * Never a swipe that became a match (DECISIONS.md, 25 Sep 2026). Removing the
- * match took the other person's chat, plans and call history with it, without
- * a word to them, and anything in it they might have reported. Unmatch is how
- * a match ends: it tells the other side, closes the pair's plans, and keeps the
- * row a report investigation needs. So a matched swipe answers ALREADY_MATCHED,
- * with the match's id while the viewer can still open it, for the app to offer
- * Unmatch.
- */
 export async function rewind(userId: string, mode: Mode): Promise<RewindResult> {
   await requireEnabledMode(userId, mode);
   await requireFeature(userId, ENTITLEMENT_KEYS.REWIND, 'Rewind is available with Premium.');
@@ -250,14 +201,6 @@ export async function rewind(userId: string, mode: Mode): Promise<RewindResult> 
   return { restored_user_id: last.target_id, action: last.action, match_removed: false };
 }
 
-/**
- * Refuses a rewind when the pair has a match in this mode, whatever its state.
- *
- * The id goes back only while the match is still on the viewer's list, the
- * same rule as the list itself. An ended match answers `match_id: null`, the
- * same whether it was unmatched, blocked, or the other account is gone:
- * anything more would tell a block apart by elimination (spec §4.4).
- */
 async function refuseIfMatched(
   tx: Prisma.TransactionClient,
   userId: string,
@@ -290,13 +233,6 @@ export interface LikeReceived {
   user: UserCompact;
 }
 
-/**
- * The likes-you inbox — decision #5: profiles, not messages.
- *
- * Excludes anyone the viewer has already swiped on in this mode: that like
- * either became a match or was passed on, and either way it is no longer a
- * pending request.
- */
 export async function likesYou(
   userId: string,
   mode: Mode,
@@ -361,8 +297,6 @@ export async function likesYou(
     limit: page.limit,
   };
 }
-
-/** Count only — for a badge, without paying for the whole list or the paywall. */
 export async function countLikesYou(userId: string, mode: Mode): Promise<number> {
   const blockedUserIds = await getBlockedUserIds(userId);
 
@@ -377,12 +311,6 @@ export async function countLikesYou(userId: string, mode: Mode): Promise<number>
   });
 }
 
-/**
- * Tells both people about a new match.
- *
- * Each side is sent the OTHER person, so the payload is directly renderable
- * without the client working out which half of the pair it is looking at.
- */
 async function announceMatch(match: MatchModel, actorId: string, targetId: string): Promise<void> {
   const [users, photoUrls, conversation] = await Promise.all([
     prisma.user.findMany({
@@ -437,20 +365,6 @@ async function announceMatch(match: MatchModel, actorId: string, targetId: strin
   }
 }
 
-/**
- * Makes the matches a pause held back (DECISIONS.md, 24 Sep 2026).
- *
- * While either person has paused new matches, a like that would have
- * completed a match is recorded and makes nothing — `createMatchIfMutual`
- * refuses. Neither can swipe on the other again (a swipe is unique per pair
- * and mode), so without this the pair would be stranded for good. Called when
- * [userId]'s pause ends: every pair that liked each other in the same mode,
- * has never had a match, can still see each other and still has the mode on,
- * becomes a match now — and both hear about it as they would have then.
- *
- * A pair whose other half is still paused stays waiting; their own unpause
- * makes it.
- */
 export async function matchLikesHeldByPause(userId: string): Promise<number> {
   const [given, received] = await Promise.all([
     prisma.swipe.findMany({
@@ -528,13 +442,6 @@ export async function matchLikesHeldByPause(userId: string): Promise<number> {
   return made;
 }
 
-/**
- * Tells someone they were liked, WITHOUT saying by whom.
- *
- * Who liked you is behind a paywall (see `likesYou`). Naming them here would
- * give the feature away in a push banner, so the notification carries a count
- * and a deep link to the paywalled screen.
- */
 async function announceLike(targetId: string, mode: Mode, isSuperLike: boolean): Promise<void> {
   await notify({
     userId: targetId,

@@ -1,6 +1,5 @@
 import type { UserRole, UserStatus } from '@/db/prisma';
 
-/** spec §4.3: the exact shape every auth endpoint returns. */
 export interface AuthTokens {
   access_token: string;
   refresh_token: string;
@@ -9,28 +8,18 @@ export interface AuthTokens {
 }
 
 export interface AccessTokenPayload {
-  /** User id. */
   sub: string;
-  /**
-   * The device the session runs on: the app's X-Device-Id at sign-in. Checked
-   * on every request and socket handshake, so a device signed out from
-   * settings stops working at once instead of when this token expires. Absent
-   * for a session that started without a device id.
-   */
   did?: string;
   type: 'access';
 }
 
 export interface RefreshTokenPayload {
   sub: string;
-  /** This token's own id — the row it maps to in refresh_tokens. */
   jti: string;
-  /** The family it belongs to. Replay revokes every token sharing this. */
   fam: string;
   type: 'refresh';
 }
 
-/** Attached to the request by the authenticate middleware. */
 export interface AuthenticatedUser {
   id: string;
   role: UserRole;
@@ -38,7 +27,6 @@ export interface AuthenticatedUser {
   is_onboarded: boolean;
 }
 
-/** The `data` payload of GET /auth/me. */
 export interface AuthMeResponse {
   id: string;
   display_name: string;

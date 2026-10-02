@@ -6,12 +6,6 @@ import { asyncHandler } from '@utils/async-handler';
 import * as controller from './modes.controller';
 import { modeParamSchema, updateModeSchema } from './modes.schema';
 
-/**
- * Mode routes (spec §7, Batch 5).
- *
- * Authenticated but deliberately NOT behind requireOnboarded: enabling a mode
- * is part of onboarding, so gating it on a completed onboarding would deadlock.
- */
 export const modesRouter: Router = Router();
 
 modesRouter.use(authenticate);

@@ -12,46 +12,6 @@ import { emitEntitlementsUpdated } from '@/realtime/emit';
 import { logger } from '@utils/logger';
 import { describePlan } from './plan-features';
 
-/**
- * Subscriptions (spec §5.10).
- *
- * This module READS subscriptions. It cannot create or modify one, and there is
- * deliberately no code path here that grants access — purchasing and receipt
- * validation live outside this codebase entirely, and rows arrive from there.
- *
- * That division is what keeps the spec's rule enforceable:
- *
- *   "Never grant entitlement from a client claim alone. The app sends a
- *    transaction; the server verifies it with the store before anything
- *    changes. A client-trusting implementation is trivially exploitable and
- *    will be exploited."
- *
- * With no writer in this service, the only way a tier can change is a
- * verified subscription row. An endpoint that took a tier, a price or a receipt
- * and acted on it would be the bug.
- *
- * ONE BOUNDED EXCEPTION, in its own file so it can be found and removed:
- * test-purchases.service.ts grants `source = test` rows on request, for
- * staging only, until RevenueCat exists (DECISIONS.md, 24 Sep 2026). Those rows
- * count only while `testPurchasesEnabled()`, which a production boot refuses —
- * checked below, where the tier is decided, not only where rows are written.
- *
- * ENTITLEMENT BELONGS TO THE USER, not a device or a store account. The tier is
- * resolved from Subscription rows keyed on user_id, so signing in anywhere
- * carries it.
- */
-
-/**
- * Statuses that still grant access.
- *
- * `cancelled` is here on purpose: cancelling means "do not renew", and the user
- * has already paid for the rest of the period. `current_period_end` is what
- * actually ends access, checked separately below.
- *
- * `in_grace_period` and `on_billing_retry` are here because the biller is
- * still trying to collect. Cutting someone off over a card that needed
- * reissuing loses the customer AND the payment.
- */
 const ENTITLING_STATUSES: SubscriptionStatus[] = [
   SubscriptionStatus.active,
   SubscriptionStatus.in_grace_period,
@@ -65,18 +25,6 @@ const TIER_RANK: Record<SubscriptionTier, number> = {
   advanced: 2,
 };
 
-/**
- * The tier a user is actually entitled to, from subscription rows.
- *
- * This replaces the Batch 6 stub that read `user.subscription_tier` as a hand-
- * set column. That column is still maintained as a denormalised copy for admin
- * lists and analytics, but it is no longer the source of truth — a column
- * somebody can edit is not an entitlement.
- *
- * Takes the HIGHEST entitling tier: someone who upgrades mid-period may briefly
- * hold two rows, and the answer must be the better one rather than whichever
- * the database returned first.
- */
 export async function resolveTier(userId: string, now = new Date()): Promise<SubscriptionTier> {
   const subscriptions = await prisma.subscription.findMany({
     where: {
@@ -100,12 +48,6 @@ export async function resolveTier(userId: string, now = new Date()): Promise<Sub
   );
 }
 
-/**
- * Recomputes the tier and writes the denormalised copy.
- *
- * Emits over the socket so a client sitting on the paywall updates the moment
- * its entitlement changes, rather than on next launch.
- */
 export async function syncTier(userId: string): Promise<SubscriptionTier> {
   const tier = await resolveTier(userId);
 
@@ -135,7 +77,6 @@ export interface SubscriptionView {
   current_period_start: string;
   current_period_end: string;
   auto_renew: boolean;
-  /** True while access is live, whatever the status label says. */
   is_active: boolean;
   cancelled_at: string | null;
   created_at: string;
@@ -176,26 +117,10 @@ export interface ProductView {
   name: string;
   tier: SubscriptionTier;
   billing_cycle: BillingCycle;
-  /** spec §4.6: integer minor units plus currency. Never floats. */
   price: { amount_minor: number; currency: string } | null;
-  /**
-   * What the plan adds over the free tier, in words, from the entitlement
-   * matrix — so a feature moved between tiers updates the paywall with no app
-   * release. See plan-features.ts.
-   */
   features: string[];
 }
 
-/**
- * What is on sale.
- *
- * Prices come from the current PriceVersion rather than being hardcoded, so a
- * price change is a row with a new `effective_from` and the old one keeps its
- * history for grandfathering and reporting (spec §5.10).
- *
- * INFORMATIONAL. Whoever takes the payment decides what is actually charged;
- * this is the catalogue the paywall renders, not a price the backend enforces.
- */
 export async function listProducts(): Promise<ProductView[]> {
   const now = new Date();
 
@@ -239,7 +164,6 @@ export async function listProducts(): Promise<ProductView[]> {
   });
 }
 
-/** The user's own subscription state. */
 export async function getMySubscription(userId: string): Promise<{
   tier: SubscriptionTier;
   subscription: SubscriptionView | null;
@@ -257,13 +181,6 @@ export async function getMySubscription(userId: string): Promise<{
   };
 }
 
-/**
- * Expires subscriptions whose paid period has run out.
- *
- * Bookkeeping only: `resolveTier` already checks `current_period_end`, so a
- * lapsed subscription stops entitling the moment it lapses whether or not this
- * has run. It exists so admin lists and analytics can filter on the column.
- */
 export async function sweepExpiredSubscriptions(now = new Date()): Promise<number> {
   const lapsed = await prisma.subscription.findMany({
     where: {

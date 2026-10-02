@@ -16,18 +16,6 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { emitConversationUpdated, emitMessage, emitMessageRead, emitTyping } from '@/realtime/emit';
 import type { SendMessageBody } from './chat.schema';
 
-/**
- * Conversations and messages (spec §5.4, Batch 8).
- *
- * A conversation belongs to exactly one match and inherits its mode, which
- * never changes. Exactly two participants, always (decision #11) — Study Buddy
- * groups are out of scope for v1.
- *
- * Users cannot message before matching (decision #5), so there is no endpoint
- * that creates a conversation. One is created with its match and lives and dies
- * with it.
- */
-
 export interface MessageView {
   id: string;
   conversation_id: string;
@@ -47,14 +35,12 @@ export interface ConversationView {
   id: string;
   match_id: string;
   mode: Mode;
-  /** Immutable header state the app renders without a second call (spec §4.7). */
   user: UserCompact;
   last_message_at: string | null;
   last_message_preview: string | null;
   unread_count: number;
   is_archived: boolean;
   is_muted: boolean;
-  /** False when the pair is blocked, or the match expired or was unmatched. */
   is_writable: boolean;
   match_expires_at: string;
 }
@@ -78,13 +64,6 @@ type ConversationWithRelations = Prisma.ConversationGetPayload<{
   include: typeof CONVERSATION_INCLUDE;
 }>;
 
-/**
- * Loads a conversation the viewer participates in, or throws 404.
- *
- * Participation is checked against the MATCH, not the conversation-state rows:
- * a state row is bookkeeping and could in principle be missing, while the match
- * is the authority on who is in this conversation.
- */
 async function loadParticipating(
   viewerId: string,
   conversationId: string,
@@ -249,8 +228,6 @@ async function toMessageView(message: {
     sender_id: message.sender_id,
     type: message.type,
     body: message.body,
-    // Both buckets are private, so every media URL is presigned on read and
-    // time-limited. Nothing is ever stored as a public URL.
     media_url: message.media_asset
       ? await presignDownload({
           bucket: message.media_asset.s3_bucket as BucketName,
@@ -281,14 +258,6 @@ const MESSAGE_SELECT = {
   media_asset: { select: { s3_bucket: true, s3_key: true } },
 } satisfies Prisma.MessageSelect;
 
-/**
- * Message history, NEWEST FIRST, cursor walking backwards into the past
- * (spec §4.5).
- *
- * This is the opposite direction to every other list in the API, and it is
- * deliberate: a chat opens at the bottom, so the first page must be the most
- * recent messages and "next page" must mean older.
- */
 export async function listMessages(
   viewerId: string,
   conversationId: string,
@@ -324,14 +293,6 @@ export async function listMessages(
   };
 }
 
-/**
- * Why a conversation is closed, if it is.
- *
- * Every reason answers the SAME error. "They blocked you", "they unmatched
- * you", and "the match expired" are different facts, and telling them apart
- * would let someone confirm a block by elimination — the same leak a 403 on a
- * blocked profile would cause (spec §4.4, §5.5).
- */
 async function assertWritable(
   conversation: ConversationWithRelations,
   viewerId: string,
@@ -372,15 +333,6 @@ function previewFor(type: MessageType, body: string | null): string {
   }
 }
 
-/**
- * The message this token already made, if it made one.
- *
- * The check and the insert are not one operation, so two taps in flight at
- * once can both miss it; the partial unique index is what actually stops the
- * second, and the catch below turns that into this same answer. This lookup
- * is the common case — a retry seconds later — answered without touching
- * quota.
- */
 async function findByClientToken(
   viewerId: string,
   conversationId: string,
@@ -410,10 +362,6 @@ export async function sendMessage(
 ): Promise<MessageView> {
   const conversation = await loadParticipating(viewerId, conversationId);
   await assertWritable(conversation, viewerId);
-
-  // Before anything is claimed or spent. A send that timed out has usually
-  // arrived, and the app trying again must cost neither a second row nor a
-  // message from the day's allowance.
   const alreadySent = await findByClientToken(viewerId, conversationId, input.client_token);
   if (alreadySent) {
     return alreadySent;
@@ -459,9 +407,6 @@ export async function sendMessage(
           media_asset_id: mediaAssetId,
           venue_id: input.venue_id ?? null,
           duration_ms: input.duration_ms ?? null,
-          // spec §5.4: "review before you send" is advisory. When the user
-          // pushes past a warning we record it — that is exactly what the
-          // moderation team needs to see later. Batch 10 sets the flag itself.
           moderation_overridden: input.moderation_overridden ?? false,
           client_token: input.client_token ?? null,
         },
@@ -494,13 +439,6 @@ export async function sendMessage(
 
       return created;
     });
-
-    // POST-HOC SCAN (spec §7, Batch 10). After the write and outside the
-    // transaction: moderation is advisory, so a scan failing must never cost a
-    // user their message. A pre-send check is offered separately at
-    // POST /moderation/check — this catches what was sent regardless of whether
-    // the client bothered to call it, including anything sent while the
-    // provider was down.
     let flagged = message.moderation_flagged;
 
     if (input.type === 'text' && input.body) {
@@ -597,7 +535,6 @@ export interface ReadResult {
   last_read_at: string;
 }
 
-/** Marks everything up to now read, and clears the badge. */
 export async function markRead(viewerId: string, conversationId: string): Promise<ReadResult> {
   await loadParticipating(viewerId, conversationId);
 
@@ -608,10 +545,6 @@ export async function markRead(viewerId: string, conversationId: string): Promis
       where: { conversation_id: conversationId, user_id: viewerId },
       data: { last_read_at: now, unread_count: 0 },
     }),
-    // The feed told the viewer about these messages. Once the conversation is
-    // read, so are those notifications — otherwise the notification badge, and
-    // the app icon badge pushed from it, counts messages already read and only
-    // ever grows.
     prisma.notification.updateMany({
       where: {
         user_id: viewerId,
@@ -620,10 +553,7 @@ export async function markRead(viewerId: string, conversationId: string): Promis
         data: { path: ['conversation_id'], equals: conversationId },
       },
       data: { read_at: now },
-    }),
-    // Read receipts are per message so the sender can render ticks. Scoped to
-    // messages the viewer did NOT send: marking your own as read is meaningless
-    // and would show the wrong tick to the other person.
+    }),  
     prisma.message.updateMany({
       where: {
         conversation_id: conversationId,
@@ -634,7 +564,6 @@ export async function markRead(viewerId: string, conversationId: string): Promis
     }),
   ]);
 
-  // After the write, so a failed update cannot move the other person's ticks.
   const other = await otherParticipantId(conversationId, viewerId);
 
   if (other) {
@@ -670,7 +599,6 @@ export async function updateConversationState(
   return getConversation(viewerId, conversationId);
 }
 
-/** The app-badge number: unread across every conversation, in one query. */
 export async function unreadTotal(viewerId: string): Promise<{ unread_count: number }> {
   const result = await prisma.conversationState.aggregate({
     where: {

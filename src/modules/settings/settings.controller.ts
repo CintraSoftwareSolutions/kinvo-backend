@@ -7,9 +7,6 @@ import * as devicesService from './devices.service';
 import type { SnoozeBody, UpdateSettingsBody } from './settings.schema';
 import * as settingsService from './settings.service';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
-/** The stable per-install id the app sends on every request (spec §4.11). */
 function currentDeviceId(req: Request): string | undefined {
   return req.get(CLIENT_HEADERS.DEVICE_ID) ?? undefined;
 }

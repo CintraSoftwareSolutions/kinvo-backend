@@ -3,8 +3,6 @@ import { z } from 'zod';
 import { PAGINATION } from '@config/constants';
 import { NotificationCategory } from '@/db/prisma';
 
-/** Notification request validation (spec §4.10, Batch 11). */
-
 export const listQuerySchema = z
   .object({
     limit: z.coerce
@@ -41,10 +39,6 @@ export const updatePreferenceSchema = z
     message: 'Provide at least one field to update.',
   });
 
-/**
- * spec §7: FCM token registration. The token is bound to a device rather than a
- * user, because one person may have several and each has its own token.
- */
 export const registerPushTokenSchema = z
   .object({
     device_id: z.string().min(1).max(128),

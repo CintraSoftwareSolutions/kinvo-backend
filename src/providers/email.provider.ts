@@ -2,22 +2,6 @@ import nodemailer, { type Transporter } from 'nodemailer';
 
 import { logger } from '@utils/logger';
 
-/**
- * Email delivery boundary (spec §7, Batch 11).
- *
- * For notifications, email is delivery and never the record: every notification
- * is already in the feed before anything is sent here, so an SMTP outage costs a
- * message in an inbox, not a notification the user can never find.
- *
- * ONE MESSAGE BREAKS THAT RULE — the password reset code. Nothing else carries
- * it and there is no feed entry behind it, so for that one message delivery IS
- * the product. That is why `send` answers with an outcome rather than a boolean:
- * a transport that cannot send at all and an address that cannot be delivered to
- * were previously the same `false`, and they need opposite answers. The first is
- * ours to admit to. The second is a fact about somebody's address, and password
- * reset exists to refuse questions about addresses.
- */
-
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -25,20 +9,8 @@ export interface EmailMessage {
   html?: string;
 }
 
-/**
- * What became of one message.
- *
- * - `sent` — the provider accepted it. Not proof it arrived; nothing is.
- * - `rejected` — the provider refused THIS RECIPIENT: unverified while SES is in
- *   the sandbox, suppressed after a hard bounce, malformed. Never reportable:
- *   whether an address can receive mail is a fact about the address.
- * - `unavailable` — the transport is not working: no credentials, a denied IAM
- *   policy, a paused account, the daily cap, a timeout. Nothing to do with the
- *   recipient, so it is safe to report and dishonest to hide.
- */
 export type EmailDelivery = { readonly status: 'sent' } | EmailFailure;
 
-/** A message that did not go, and why — the two outcomes that carry a reason. */
 export type EmailFailure =
   | { readonly status: 'rejected'; readonly reason: string }
   | { readonly status: 'unavailable'; readonly reason: string };
@@ -56,30 +28,11 @@ export function emailUnavailable(reason: string): EmailFailure {
 export interface EmailProvider {
   readonly name: string;
   readonly isConfigured: boolean;
-
-  /**
-   * Whether the transport last worked. Read before a message is composed, by
-   * the one caller that has to refuse rather than fail silently.
-   */
   readonly isReady: boolean;
 
   send(message: EmailMessage): Promise<EmailDelivery>;
 }
 
-/**
- * Whether the transport is working, remembered between sends.
- *
- * Password reset refuses honestly when email is down, and that refusal has to be
- * decided BEFORE the address is looked up — otherwise "we cannot send email" is
- * returned only for addresses that have an account, and the endpoint answers by
- * its error code the one question it exists to refuse. This is what that
- * decision is made from, and it is why the knowledge has to outlive the request
- * that discovered it.
- *
- * It forgets after [recoveryWindow]. A transport that has been fixed, or a blip,
- * must not leave the endpoint refusing for ever, and nothing else probes it —
- * the next request through is the probe.
- */
 export class TransportHealth {
   private failedAt: number | null = null;
 
@@ -105,7 +58,6 @@ export class TransportHealth {
   }
 }
 
-/** Runs until a mail transport exists, and in every test. */
 export class NoopEmailProvider implements EmailProvider {
   readonly name = 'noop';
   readonly isConfigured = false;
@@ -130,22 +82,8 @@ export interface SmtpConfig {
   from: string;
 }
 
-/**
- * Nodemailer failures that are about the recipient rather than the transport.
- *
- * `EENVELOPE` is the server refusing a MAIL FROM or RCPT TO, and `EMESSAGE` the
- * message itself — the address or the content, not the connection. Everything
- * else (`EAUTH`, `ECONNECTION`, `ESOCKET`, `ETIMEDOUT`, `EDNS`) is the transport
- * being unusable, which is ours to admit to.
- */
 const SMTP_RECIPIENT_FAILURES = new Set(['EENVELOPE', 'EMESSAGE']);
 
-/**
- * The parts of a failed SMTP send that are safe to log. Not the error: a
- * refused RCPT carries the recipient's address in its message and again in the
- * server's response text. Not the subject either — for a password reset it is
- * the code. `describeSesFailure` has the longer version of the same rule.
- */
 function describeSmtpFailure(error: unknown, reason: string): Record<string, unknown> {
   const failure = error as { responseCode?: number; command?: string } | null | undefined;
 

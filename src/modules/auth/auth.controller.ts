@@ -30,32 +30,17 @@ import {
   verifyAccessToken,
 } from './token.service';
 
-/**
- * Controllers translate between HTTP and the service layer. No business logic,
- * no database access (spec §0.5).
- */
 
-/**
- * The device a sign-in comes from: the body's `device_id`, or else the header
- * the app sends with every request (spec §4.11).
- *
- * Resolved ONCE per sign-in and used for both the refresh token and the Device
- * row. They must be the same value. Revoking a device matches refresh tokens on
- * device_id, so if the Device row recorded the header while the token recorded
- * the body, revoking would match nothing, report success, and leave the session
- * alive — a security screen telling the user a comforting lie.
- */
+
 function deviceIdFor(req: Request, bodyDeviceId: string | undefined): string | undefined {
   return bodyDeviceId ?? req.get(CLIENT_HEADERS.DEVICE_ID) ?? undefined;
 }
 
-/** A client header, trimmed and cut to the column it is stored in. */
 function headerValue(req: Request, name: string, maxLength: number): string | undefined {
   const value = req.get(name)?.trim();
   return value ? value.slice(0, maxLength) : undefined;
 }
 
-/** What the request's headers say about the device (spec §4.11). */
 function deviceDetails(req: Request, userId: string, deviceId: string): DeviceDetails {
   return {
     userId,
@@ -68,16 +53,6 @@ function deviceDetails(req: Request, userId: string, deviceId: string): DeviceDe
   };
 }
 
-/**
- * Records the device a session runs on, EVERY way a session starts.
- *
- * Push tokens can only be registered against a recorded device, and the device
- * list can only sign out what it lists. Recording it at log-in alone left every
- * account that signed up, or signed in with a phone number, Google, or Apple,
- * unable to receive a single push.
- *
- * Best effort: a failure recording the device must not fail the sign-in.
- */
 async function recordDevice(
   req: Request,
   userId: string,
@@ -120,7 +95,6 @@ export async function login(req: Request, res: Response): Promise<void> {
   sendSuccess(res, { ...tokens });
 }
 
-/** The user id from a token we just minted; null rather than throwing. */
 function verifyAccessTokenSubject(accessToken: string): string | null {
   try {
     return verifyAccessToken(accessToken).sub;
@@ -149,46 +123,21 @@ export async function logout(req: Request, res: Response): Promise<void> {
   const { refresh_token: refreshToken } = req.body as RefreshBody;
   const session = await revokeRefreshToken(refreshToken);
 
-  // A signed-out phone leaves the device list and stops receiving the
-  // account's notifications. Left alone, it stays listed as signed in, and its
-  // push token keeps message previews arriving on a device nobody is signed in
-  // to. Best effort, like the rest of sign-out.
   if (session?.deviceId) {
     await signOutDevice(session.userId, session.deviceId).catch((error: unknown) =>
       req.log.warn({ err: error }, 'device sign-out failed'),
     );
   }
-
-  // Always succeeds. Reporting "that token was not valid" would confirm to a
-  // caller which tokens are real.
   sendSuccess(res, { signed_out: true });
 }
 
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
   const { email } = req.body as { email: string };
   const request = await authService.requestPasswordReset(email);
-
-  // The response never varies on whether the address is registered, or this
-  // endpoint becomes an account-enumeration oracle.
   const payload: Record<string, unknown> = {
     message: 'If that address has an account, a reset code is on its way.',
   };
 
-  // Nowhere to send it: local development, the test suite, and a staging box
-  // with no mail account all run without a transport, and without this the
-  // flow cannot be exercised there at all.
-  //
-  // The question is whether there is a transport AT ALL — not whether this
-  // message was delivered. A transport that exists and failed answers
-  // SERVICE_UNAVAILABLE from the service instead of reaching here, and one
-  // that refuses a single recipient says nothing at all: handing the code
-  // back in either case would be a password reset anybody can complete for
-  // anybody whose address the mail server happens to dislike.
-  //
-  // The waiver stays as the second lock: real production refuses to boot
-  // without a transport (config/env.ts), and `thirdPartyIntegrationsRequired`
-  // is what tells production from staging — `isProduction` alone does not,
-  // because staging runs with NODE_ENV=production on purpose.
   if (request && !thirdPartyIntegrationsRequired && request.hasNowhereToSend) {
     payload.reset_code = request.code;
   }

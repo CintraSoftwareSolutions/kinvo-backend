@@ -1,14 +1,5 @@
 import { prisma } from '@/db/prisma';
 
-/**
- * Conversation membership lookups for the realtime layer.
- *
- * Separate from chat.service on purpose: the chat service imports the emitters
- * and the socket handlers need membership, so putting this there would make the
- * two modules import each other.
- */
-
-/** The other participant, or null if the caller is not in the conversation. */
 export async function otherParticipantId(
   conversationId: string,
   viewerId: string,

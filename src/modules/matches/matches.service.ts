@@ -11,20 +11,6 @@ import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/com
 import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 
-/**
- * Matches (spec §5.4, Batch 8).
- *
- * The Connections screen has three tabs. Only two live here:
- *
- *   Matches   -> GET /matches
- *   Archived  -> GET /matches?archived=true
- *   Requests  -> GET /discovery/{mode}/likes-you, built in Batch 7
- *
- * "Requests" is a likes-you inbox of PROFILES, not messages (decision #5).
- * Users cannot message before matching, so it is not a conversation list and
- * does not belong to this module.
- */
-
 export interface MatchView {
   id: string;
   mode: Mode;
@@ -32,14 +18,8 @@ export interface MatchView {
   is_super_like: boolean;
   matched_at: string;
   expires_at: string;
-  /** Precomputed so the client never re-derives expiry from two timestamps. */
   is_expired: boolean;
   extension_count: number;
-  /**
-   * False when the pair is blocked, the match has expired, or it was
-   * unmatched. The app hides the composer on this rather than discovering the
-   * state by having a send rejected.
-   */
   is_writable: boolean;
   user: UserCompact;
   conversation_id: string | null;
@@ -48,19 +28,10 @@ export interface MatchView {
   unread_count: number;
 }
 
-/**
- * Expiry is decided at READ time, not by a sweeper.
- *
- * A row whose `expires_at` has passed is expired the moment it passes,
- * regardless of whether a job has run. Trusting the `status` column alone
- * would leave a match writable for however long the sweeper is behind — and a
- * queue outage would silently extend everyone's matches.
- */
 export function isExpired(match: { status: MatchStatus; expires_at: Date }, now = new Date()) {
   return match.status === MatchStatus.expired || match.expires_at <= now;
 }
 
-/** The pair minus the viewer. Every match has exactly two participants (#11). */
 export function otherUserId(
   match: { user_a_id: string; user_b_id: string },
   viewerId: string,
@@ -68,20 +39,6 @@ export function otherUserId(
   return match.user_a_id === viewerId ? match.user_b_id : match.user_a_id;
 }
 
-/**
- * Can these two still reach each other through this match?
- *
- * ONE definition, deliberately. Messaging and calling ask exactly the same
- * question, and this used to be a private helper inside the chat service.
- * Copying five lines into a second module is how the two drift: the copy gets
- * updated when a rule changes and the original does not, or vice versa, and the
- * one that falls behind is a feature that no longer checks blocks.
- *
- * Callers phrase their own error. What they must NOT do is tell the reasons
- * apart in the response — "they blocked you", "they unmatched you" and "the
- * match expired" are different facts, and distinguishing them lets someone
- * confirm a block by elimination (spec §4.4, §5.5).
- */
 export async function isPairReachable(
   match: { status: MatchStatus; expires_at: Date },
   viewerId: string,
@@ -96,16 +53,6 @@ export async function isPairReachable(
   );
 }
 
-/**
- * Whether a match still shows among the viewer's matches, and opens from
- * there: it has not been unmatched — which is also how a block ends one — and
- * the other account is neither gone nor suspended. Expired and blocked-but-
- * still-matched pairs stay listed; `isPairReachable` is what decides writing.
- *
- * The one rule behind the matches list, GET /matches/{id} and rewind's
- * refusal, so a match reads as ended the same way everywhere, whatever the
- * reason it ended (spec §4.4).
- */
 export function isMatchListed(
   match: { status: MatchStatus },
   other: { deleted_at: Date | null; status: UserStatus },
@@ -117,11 +64,6 @@ export function isMatchListed(
   );
 }
 
-/**
- * USER_COMPACT_SELECT is the shared contract and deliberately carries no
- * account state, so the two fields needed to hide a match whose other side
- * left are added here rather than widening it for every caller.
- */
 const PARTICIPANT_SELECT = {
   ...USER_COMPACT_SELECT,
   deleted_at: true,
@@ -191,11 +133,6 @@ export async function listMatches(viewerId: string, options: ListMatchesOptions)
       // An unmatch is final for both sides and the row stops being a match.
       status: { not: MatchStatus.unmatched },
       ...(options.mode ? { mode: options.mode } : {}),
-      // BLOCK VISIBILITY (see DECISIONS.md §1.2e): a blocked pair's match stays
-      // LISTED and its conversation stays readable, frozen. Hiding it makes
-      // history vanish mid-scroll and reads as data loss; leaving it writable
-      // would defeat the block. `is_writable` below is how the app knows to
-      // hide the composer, and the chat service refuses the send regardless.
       conversation: { states: { some: { user_id: viewerId, is_archived: archived } } },
       ...(after ? { matched_at: { lt: new Date(String(after.k)) } } : {}),
     },
@@ -237,12 +174,6 @@ export async function listMatches(viewerId: string, options: ListMatchesOptions)
   };
 }
 
-/**
- * One match, or 404.
- *
- * 404 covers "not yours", "unmatched", and "never existed" identically — a 403
- * would confirm the match is real and belongs to someone (spec §4.4).
- */
 export async function getMatch(viewerId: string, matchId: string): Promise<MatchView> {
   const match = await prisma.match.findFirst({
     where: {
@@ -272,15 +203,6 @@ export async function getMatch(viewerId: string, matchId: string): Promise<Match
   return toMatchView(match, viewerId, photoUrls, new Set(blockedUserIds), online);
 }
 
-/**
- * Unmatch — final, and symmetric.
- *
- * Not a delete: `unmatched_by_id` is what a later report investigation needs,
- * and the row is what stops the pair reappearing in each other's decks. The
- * swipes stay, so neither person is offered the other again in this mode.
- * The pair's open plans close in the same transaction (see
- * `closePlansOnEndedMatches`).
- */
 export async function unmatch(viewerId: string, matchId: string): Promise<void> {
   const match = await prisma.match.findFirst({
     where: {
@@ -311,14 +233,6 @@ export async function unmatch(viewerId: string, matchId: string): Promise<void> 
   logger.info({ match_id: match.id }, 'match unmatched');
 }
 
-/**
- * Extends an expiring match (premium, spec §5.4).
- *
- * Extends from the CURRENT expiry, not from now: extending a match with three
- * days left should give the full window on top, not reset it to a shorter one.
- * Extending an already-expired match extends from now instead, so a lapsed
- * match becomes usable rather than staying expired.
- */
 export async function extendMatch(viewerId: string, matchId: string): Promise<MatchView> {
   await requireFeature(
     viewerId,
@@ -357,13 +271,6 @@ export async function extendMatch(viewerId: string, matchId: string): Promise<Ma
   return getMatch(viewerId, match.id);
 }
 
-/**
- * Marks lapsed matches expired.
- *
- * Bookkeeping only — `isExpired` already treats them as expired at read time,
- * so this job being late or not running changes no user-visible behaviour. It
- * exists so admin lists and analytics can filter on the column.
- */
 export async function sweepExpiredMatches(now = new Date()): Promise<number> {
   const result = await prisma.match.updateMany({
     where: { status: MatchStatus.active, expires_at: { lte: now } },

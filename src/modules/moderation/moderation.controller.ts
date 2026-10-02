@@ -5,7 +5,6 @@ import { sendList, sendSuccess } from '@utils/response';
 import * as moderationService from './moderation.service';
 import type { CheckContentBody, ListFlagsQuery, ResolveFlagBody } from './moderation.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
 
 export async function checkContent(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);

@@ -9,18 +9,6 @@ import {
 import { SesEmailProvider } from '@/providers/ses.provider';
 import { logger } from '@utils/logger';
 
-/**
- * Provider selection (spec §3, Batch 11).
- *
- * Both fall back to a no-op when credentials are absent, which is what lets the
- * whole module be built and tested before Firebase and SMTP accounts exist.
- * That is only safe because every notification is already persisted to the feed
- * before delivery is attempted — the user still sees it, they just do not get a
- * banner or an email.
- *
- * Resolved lazily so importing this module never reads credentials or opens a
- * connection. Tests import the app and must do neither.
- */
 
 let push: PushProvider | null = null;
 let email: EmailProvider | null = null;

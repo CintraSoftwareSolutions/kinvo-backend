@@ -3,10 +3,6 @@ import pino, { type Logger, type LoggerOptions } from 'pino';
 import { SERVICE_NAME } from '@config/constants';
 import { env, isDevelopment } from '@config/env';
 
-/**
- * Spec 15: no PII in logs. Redaction is centralised here so it cannot be
- * forgotten at a call site.
- */
 const REDACT_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
@@ -37,10 +33,6 @@ const options: LoggerOptions = {
   redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
 };
 
-/**
- * pino-pretty runs in a worker thread. Enabling it under Jest leaves the worker
- * open and the test run hangs, so it is development-only.
- */
 export const logger: Logger = isDevelopment
   ? pino({
       ...options,

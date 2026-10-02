@@ -5,7 +5,6 @@ import { sendList, sendSuccess } from '@utils/response';
 import * as matchesService from './matches.service';
 import type { ListMatchesQuery } from './matches.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
 
 export async function listMatches(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);

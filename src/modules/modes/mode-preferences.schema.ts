@@ -2,20 +2,6 @@ import { z } from 'zod';
 
 import { Mode } from '@/db/prisma';
 
-/**
- * Mode-specific preferences (spec §5.2).
- *
- * Common preferences — age range, radius, verified-only — are columns on
- * UserMode. The extras differ per mode and are stored as validated JSON:
- * "study_buddy has subject and academic level; dating has relationship goal;
- * pet_dates has pet type; trading has instrument interests."
- *
- * One schema per mode, dispatched on the mode. Sending `pet_type` to `dating`
- * is a validation error rather than a field silently stored and never read —
- * the JSON column would otherwise accept anything and the mistake would only
- * surface as a filter that quietly matches nobody.
- */
-
 const empty = z.object({}).strict();
 
 const dating = z
@@ -45,11 +31,6 @@ const networking = z
   })
   .strict();
 
-/**
- * spec §1: Trading is an interest category and nothing more. These are tags
- * describing what someone likes talking about. Nothing in this system quotes a
- * price, records a trade, moves an asset, or touches a brokerage.
- */
 const trading = z
   .object({
     instruments: z
@@ -104,13 +85,6 @@ const fitness = z
   })
   .strict();
 
-/**
- * The per-mode schemas, keyed by mode.
- *
- * `.strict()` throughout, deliberately: an unknown key is rejected rather than
- * dropped, so a client sending the wrong shape learns immediately instead of
- * wondering why its filter has no effect.
- */
 export const MODE_PREFERENCE_SCHEMAS: Record<Mode, z.ZodTypeAny> = {
   [Mode.dating]: dating,
   [Mode.study_buddy]: studyBuddy,
@@ -122,7 +96,6 @@ export const MODE_PREFERENCE_SCHEMAS: Record<Mode, z.ZodTypeAny> = {
   [Mode.fitness]: fitness,
 };
 
-/** Modes with no extras in v1 still validate — they just accept nothing. */
 export const MODES_WITHOUT_EXTRAS: Mode[] = [];
 
 export function preferenceSchemaFor(mode: Mode): z.ZodTypeAny {

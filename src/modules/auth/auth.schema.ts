@@ -1,11 +1,5 @@
 import { z } from 'zod';
 
-/**
- * Zod schemas for every auth endpoint (spec §0.5: validate before business
- * logic). Messages are user-displayable — they surface directly in the
- * VALIDATION_FAILED details keyed by field (spec §4.2).
- */
-
 const email = z
   .string({ required_error: 'Enter your email address.' })
   .trim()
@@ -13,12 +7,6 @@ const email = z
   .max(320, 'That email address is too long.')
   .email('Enter a valid email address.');
 
-/**
- * Length only. Composition rules (a digit, a symbol, a capital) push people
- * toward predictable substitutions and shorter passwords; length is the term
- * that actually matters. 72 bytes is bcrypt's ceiling — argon2 has no such
- * limit, but capping keeps a future algorithm swap from silently truncating.
- */
 const password = z
   .string({ required_error: 'Enter a password.' })
   .min(8, 'Use at least 8 characters.')
@@ -102,10 +90,6 @@ const socialSignIn = z.object({
   id_token: z
     .string({ required_error: 'An identity token is required.' })
     .min(1, 'An identity token is required.'),
-  /**
-   * Apple sends the user's name only on the very first authorisation and never
-   * again, so the app captures it then and passes it here.
-   */
   display_name: displayName.optional(),
   device_id: deviceId,
 });

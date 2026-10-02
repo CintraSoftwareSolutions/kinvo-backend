@@ -6,36 +6,6 @@ import { USER_COMPACT_SELECT, type UserCompact, toUserCompact } from '@utils/com
 import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 
-/**
- * Blocking (spec §5.5, Batch 12).
- *
- * The EXCLUSION side of blocking — what a block hides — lives in
- * `block.service.ts` and is composed into every query that can surface a user.
- * This file is only the CRUD: creating, removing, and listing them.
- *
- * They are deliberately separate. The exclusion clause is imported by a dozen
- * modules and must never grow a dependency on report handling or photo
- * presigning; this file imports both.
- */
-
-/**
- * Blocks someone and severs the relationship, inside the caller's transaction.
- *
- * Takes a transaction client because reporting-with-block has to be atomic
- * (spec §5.7): a report filed without its block, because a write failed in
- * between, leaves someone still exposed to the person they just reported.
- *
- * The unmatch lives HERE, not in `block` below, so that every way of blocking
- * does it. The block alone would hide them from decks and profile views, but an
- * active match would still sit in both people's lists — visible and frozen,
- * which is right for a match that lapsed and wrong for one the user
- * deliberately cut. Reporting with "also block" once skipped it, and left the
- * person just reported in the reporter's matches. Their open plans close with
- * it, so neither of them has a meeting with the other still under Upcoming.
- *
- * Idempotent — blocking twice is not an error. The user pressed the button
- * again, which is not a state worth an error message.
- */
 export async function blockUser(
   tx: Prisma.TransactionClient,
   blockerId: string,
@@ -73,7 +43,6 @@ export interface BlockView {
   user: UserCompact;
 }
 
-/** Blocks someone and severs the relationship (see `blockUser`). */
 export async function block(blockerId: string, blockedId: string): Promise<BlockView> {
   if (blockerId === blockedId) {
     throw ApiError.validation({ user_id: ['You cannot block yourself.'] });
@@ -107,13 +76,6 @@ export async function block(blockerId: string, blockedId: string): Promise<Block
   };
 }
 
-/**
- * Removes a block. Does NOT restore the match it severed.
- *
- * Unblocking means "I am willing to see this person again", not "undo
- * everything". Resurrecting a match the user deliberately cut would be a
- * surprise, and the pair can simply match again.
- */
 export async function unblock(blockerId: string, blockedId: string): Promise<void> {
   const deleted = await prisma.block.deleteMany({
     where: { blocker_id: blockerId, blocked_id: blockedId },
@@ -126,12 +88,6 @@ export async function unblock(blockerId: string, blockedId: string): Promise<voi
   logger.info({ blocker_id: blockerId }, 'user unblocked');
 }
 
-/**
- * The blocks this user created.
- *
- * Only their own. Listing who has blocked YOU would tell someone exactly that,
- * which is the one thing the whole 404-not-403 rule exists to prevent.
- */
 export async function listBlocks(blockerId: string, options: { limit: number; cursor?: string }) {
   const after = options.cursor ? decodeCursor(options.cursor) : null;
 

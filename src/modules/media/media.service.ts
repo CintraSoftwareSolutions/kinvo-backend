@@ -14,29 +14,11 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 import type { MediaAssetView, UploadPolicy, UploadPurpose, UploadTicket } from './media.types';
 
-/**
- * Uploads (spec §4.8, §7 Batch 4).
- *
- * Two steps, deliberately:
- *
- *   1. The client declares what it wants to upload. We check it against the
- *      policy, record the intent, and hand back a presigned URL.
- *   2. The client PUTs bytes straight to storage, then tells us it is done. We
- *      HEAD the object and record what ACTUALLY landed.
- *
- * Step 2 is not a formality. Everything the client says in step 1 is a claim;
- * only the HEAD is evidence. An asset with no `uploaded_at` may never be
- * attached to anything.
- */
 
 const MB = 1024 * 1024;
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
-/**
- * The policy table. Every limit lives here rather than scattered through
- * handlers, so "what may a user upload" is answerable by reading one object.
- */
 export const UPLOAD_POLICIES: Record<UploadPurpose, UploadPolicy> = {
   profile_photo: {
     bucket: BUCKETS.MEDIA,
@@ -102,13 +84,6 @@ const EXTENSIONS: Record<string, string> = {
   'application/pdf': 'pdf',
 };
 
-/**
- * Object keys are namespaced by purpose and owner, and end in a random UUID.
- *
- * The randomness matters: a guessable key plus any future misconfiguration of
- * the bucket policy would turn into enumerable private media. The owner prefix
- * is what makes lifecycle rules and bulk erasure expressible.
- */
 function buildKey(userId: string, purpose: UploadPurpose, mimeType: string): string {
   const extension = EXTENSIONS[mimeType] ?? 'bin';
   return `${purpose}/${userId}/${randomUUID()}.${extension}`;
@@ -216,12 +191,6 @@ function toAssetView(asset: AssetRow): MediaAssetView {
   };
 }
 
-/**
- * Confirms an upload by asking storage what is actually there.
- *
- * Idempotent — completing twice returns the same asset rather than erroring,
- * because a retried request on a mobile connection is normal.
- */
 export async function completeUpload(userId: string, uploadId: string): Promise<MediaAssetView> {
   const asset = await prisma.mediaAsset.findFirst({
     where: { id: uploadId, owner_id: userId, deleted_at: null },
@@ -262,13 +231,6 @@ export async function completeUpload(userId: string, uploadId: string): Promise<
   return toAssetView(updated);
 }
 
-/**
- * A viewable URL for an asset the caller owns.
- *
- * spec §4.8: media pending moderation is visible to its owner and nobody else.
- * This only ever serves the owner; anything serving media to another user must
- * check moderation status itself.
- */
 export async function getOwnAssetUrl(userId: string, assetId: string): Promise<string> {
   const asset = await prisma.mediaAsset.findFirst({
     where: { id: assetId, owner_id: userId, deleted_at: null, uploaded_at: { not: null } },
@@ -291,13 +253,6 @@ export interface ClaimedAsset {
   duration_ms: number | null;
 }
 
-/**
- * Claims a completed asset for a specific purpose.
- *
- * Used by anything that attaches media — a photo, a verification document, a
- * chat message. Enforces ownership, completion, and the expected kind, so a
- * verification document can never be passed off as a profile photo.
- */
 export async function claimAsset(options: {
   userId: string;
   assetId: string;
@@ -335,7 +290,6 @@ export async function claimAsset(options: {
   return asset;
 }
 
-/** Soft-deletes the record and removes the bytes. */
 export async function deleteAsset(userId: string, assetId: string): Promise<void> {
   const asset = await prisma.mediaAsset.findFirst({
     where: { id: assetId, owner_id: userId, deleted_at: null },

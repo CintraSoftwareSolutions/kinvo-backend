@@ -5,8 +5,6 @@ import { sendSuccess } from '@utils/response';
 import * as venuesService from './venues.service';
 import type { SearchVenuesQuery } from './venues.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function searchVenues(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const query = req.query as unknown as SearchVenuesQuery;

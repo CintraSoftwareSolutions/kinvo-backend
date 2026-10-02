@@ -3,34 +3,10 @@ import { isBlockedBetween } from '@modules/safety/block.service';
 import { logger } from '@utils/logger';
 import { notify } from './notifications.service';
 
-/**
- * Scheduled plan reminders (spec §7, Batch 11).
- *
- * Runs on a schedule rather than one timer per plan. A timer per plan would
- * have to survive restarts, redeploys, and every edit to the plan's time — a
- * sweep that asks "what starts soon and has not been reminded?" survives all
- * three for free.
- */
-
-/** How far ahead of a plan the reminder goes out. */
 const REMINDER_LEAD_MINUTES = 120;
 
-/**
- * How far back the sweep looks.
- *
- * Wider than the interval between runs, so a run that is late or skipped does
- * not leave a hole where plans are silently never reminded. The
- * already-reminded check is what stops the overlap producing duplicates.
- */
 const REMINDER_WINDOW_MINUTES = 90;
 
-/**
- * True when this plan has already been reminded.
- *
- * The feed is the record, so it is also the idempotency key — no extra column,
- * and it stays correct if the sweep runs twice or a deploy overlaps two
- * workers.
- */
 async function alreadyReminded(userId: string, planId: string): Promise<boolean> {
   const existing = await prisma.notification.findFirst({
     where: {

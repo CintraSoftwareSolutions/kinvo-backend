@@ -1,11 +1,6 @@
 import type { RequestHandler } from 'express';
 import type { ZodTypeAny } from 'zod';
 
-/**
- * Spec 0.5: every endpoint validates input with Zod before touching business
- * logic. Validation failures are forwarded to the error handler, which renders
- * them as VALIDATION_FAILED with field-keyed details.
- */
 export interface ValidationSchemas {
   body?: ZodTypeAny;
   query?: ZodTypeAny;
@@ -24,9 +19,6 @@ export function validate(schemas: ValidationSchemas): RequestHandler {
       }
 
       if (schemas.query) {
-        // Express 4 exposes `query` as a getter-only accessor on the request
-        // prototype, so a plain assignment throws. Redefine it instead, so
-        // handlers read coerced, defaulted values rather than raw strings.
         Object.defineProperty(req, 'query', {
           value: schemas.query.parse(req.query),
           writable: true,

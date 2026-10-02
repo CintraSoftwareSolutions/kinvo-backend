@@ -4,22 +4,12 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { logger } from '@utils/logger';
 import type { PushMessage, PushProvider, PushResult, PushTarget } from './push.provider';
 
-/**
- * Firebase Cloud Messaging (spec §3, Batch 11).
- *
- * Credentials come from a service-account JSON held in SSM Parameter Store and
- * injected as one environment variable. It is never written to disk on the
- * instance and never enters the repository.
- */
-
-/** Tokens FCM says will never work again, as opposed to a transient failure. */
 const DEAD_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
   'messaging/invalid-argument',
 ]);
 
-/** One send covers at most this many tokens; FCM rejects larger batches. */
 const BATCH_SIZE = 500;
 
 interface ServiceAccountShape {
@@ -40,9 +30,6 @@ function parseServiceAccount(raw: string): ServiceAccountShape | null {
     return {
       project_id: parsed.project_id,
       client_email: parsed.client_email,
-      // Environment variables cannot hold real newlines, so the key arrives with
-      // literal \n sequences. Without this the PEM fails to parse and every
-      // push fails with an opaque crypto error.
       private_key: parsed.private_key.replace(/\\n/g, '\n'),
     };
   } catch {
@@ -67,11 +54,6 @@ export class FcmPushProvider implements PushProvider {
     if (!account) {
       return;
     }
-
-    // Named app: initializeApp() with no name registers a global default, and a
-    // second call anywhere in the process would throw. tsx watch re-imports on
-    // every save, so reusing the existing instance is what stops a reload from
-    // crashing the dev server.
     const existing = getApps().find((app) => app.name === APP_NAME);
 
     this.app =
@@ -95,9 +77,6 @@ export class FcmPushProvider implements PushProvider {
       return { sent: 0, invalidTokens: [] };
     }
 
-    // A call is the one message the app draws itself, and the two platforms
-    // need different shapes for it, so they are sent separately. Everything
-    // else goes out in one group, exactly as before.
     if (!message.drawnByApp) {
       return this.deliver(
         targets.map((target) => target.token),
@@ -147,10 +126,6 @@ export class FcmPushProvider implements PushProvider {
       try {
         const response = await messaging.sendEachForMulticast({
           tokens: batch,
-          // A message the app draws itself carries no notification block for
-          // Android: with one, Android puts it in the tray and never wakes the
-          // app, which cannot then ring or show a call screen. The title and
-          // body still travel, as data, so the app can render them.
           ...(wakeTheApp
             ? {
                 data: {
@@ -203,7 +178,6 @@ export class FcmPushProvider implements PushProvider {
     return { sent, invalidTokens };
   }
 
-  /** Tests and graceful shutdown — an un-deleted app keeps handles open. */
   async close(): Promise<void> {
     if (this.app) {
       await deleteApp(this.app);

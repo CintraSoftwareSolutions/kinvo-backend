@@ -3,17 +3,6 @@ import { Redis } from 'ioredis';
 import { env, isProduction, isTest } from '@config/env';
 import { logger } from '@utils/logger';
 
-/**
- * Redis is cache and queue, never the system of record.
- *
- * Rate-limit counters live here so limits are shared across server instances —
- * a per-process counter multiplies the real limit by the number of instances,
- * which is the same as having no limit. Quota counters (Batch 6) and BullMQ
- * (Batch 7) join later.
- *
- * If Redis is wiped, the product degrades: everyone gets a fresh rate-limit
- * window. It does not lose data. That is an accepted, deliberate trade.
- */
 
 function createClient(): Redis {
   const client = new Redis(env.REDIS_URL, {

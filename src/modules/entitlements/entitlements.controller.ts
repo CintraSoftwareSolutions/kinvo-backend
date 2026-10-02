@@ -5,8 +5,6 @@ import { sendSuccess } from '@utils/response';
 import * as entitlementsService from './entitlements.service';
 import * as quotaService from './quota.service';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function getMyEntitlements(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
 

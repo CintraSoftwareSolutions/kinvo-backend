@@ -15,12 +15,6 @@ import {
   updatePlanSchema,
 } from './plans.schema';
 
-/**
- * Plan routes (spec §7, §5.8, Batch 12).
- *
- * Every plan belongs to a match, so `requireOnboarded` throughout — a pending
- * account has no matches and therefore nothing to plan.
- */
 export const plansRouter: Router = Router();
 
 plansRouter.use(authenticate, requireOnboarded);
@@ -37,7 +31,6 @@ plansRouter.patch(
   asyncHandler(controller.updatePlan),
 );
 
-/** Draft to proposed — the only way the other person learns it exists. */
 plansRouter.post(
   '/:id/propose',
   validate({ params: planIdParamSchema }),
@@ -56,7 +49,6 @@ plansRouter.post(
   asyncHandler(controller.cancelPlan),
 );
 
-/** Drafts only: a cancelled plan is visible to both people, a draft never was. */
 plansRouter.delete(
   '/:id',
   validate({ params: planIdParamSchema }),

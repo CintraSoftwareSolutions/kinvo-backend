@@ -22,26 +22,15 @@ import type {
   PublicProfile,
 } from './profiles.types';
 
-/**
- * Profile reading, writing, and scoring (spec §7, Batch 3).
- *
- * Two projections, deliberately kept as separate types: what you see about
- * yourself, and what everyone else sees. A shared interface would let a new
- * column leak to strangers just by being added.
- */
 
 const FULL_PROFILE_INCLUDE = {
   interests: { include: { interest: true } },
   answers: { include: { question: true }, orderBy: { position: 'asc' } },
 } as const;
 
-// Scoring lives in completion.service so photos.service can recompute after an
-// upload without importing this module, which would close an import cycle.
+
 export { getProfileFacts, refreshCompletion, scoreCompletion };
 
-// Defined in profile.repository so photos.service can use it without importing
-// this module, which would close an import cycle. Re-exported so existing
-// callers are unaffected.
 export { ensureProfile };
 
 type ProfileWithRelations = Awaited<ReturnType<typeof loadProfile>>;
@@ -142,13 +131,6 @@ export async function getOwnProfile(userId: string): Promise<OwnProfile> {
   };
 }
 
-/**
- * Another user's profile.
- *
- * `assertVisible` runs first and throws 404 for a block, a suspension, a soft
- * delete, or a user who never existed — all indistinguishable from outside
- * (spec §4.4, §5.5).
- */
 export async function getPublicProfile(
   viewerId: string,
   targetUserId: string,
@@ -204,14 +186,6 @@ export async function getPublicProfile(
   };
 }
 
-/**
- * How far away someone is, as the viewer may see it.
- *
- * Null when the target turned off "show my distance" (settings rows are created
- * on first use, so no row means shown), when either side has no location, and
- * in the owner's own preview, where every stranger would see a different
- * number and "0 miles away" is nobody's.
- */
 async function distanceShownTo(
   viewerId: string,
   targetUserId: string,
@@ -230,12 +204,6 @@ async function distanceShownTo(
   return viewerProfile ? distanceBetweenProfiles(viewerProfile.id, targetProfileId) : null;
 }
 
-/**
- * "How others see you" (spec §7, Batch 3) — the owner rendered through the
- * public projection, so what they preview is byte-for-byte what a stranger gets
- * rather than a lookalike that can drift. The one difference is distance,
- * which has no meaning from yourself; see distanceShownTo.
- */
 export async function getOwnPreview(userId: string): Promise<PublicProfile> {
   return getPublicProfile(userId, userId);
 }
@@ -310,15 +278,9 @@ export async function updateLocation(
   return getOwnProfile(userId);
 }
 
-/** Maximum interests per profile. Keeps the deck card renderable and the tag list meaningful. */
 export const MAX_INTERESTS = 10;
 
-/**
- * Replaces the interest set wholesale.
- *
- * PUT rather than POST/DELETE pairs: the client owns a chip selector, and a
- * replace is one round trip with no partial-failure state to reconcile.
- */
+
 export async function setInterests(userId: string, slugs: string[]): Promise<OwnProfile> {
   const profileId = await ensureProfile(userId);
   const unique = [...new Set(slugs)];

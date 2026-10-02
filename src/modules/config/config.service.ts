@@ -2,30 +2,14 @@ import { Mode, prisma } from '@/db/prisma';
 import { PAGINATION } from '@config/constants';
 import { env } from '@config/env';
 
-/**
- * GET /config (spec §4.12).
- *
- * "Serves mode lists, report reasons, interest tags, and prompt questions so
- * adding a mode does not require an app release."
- *
- * The deck action labels are the important part. spec §1 fixes the API actions
- * at pass / like / super_like for every mode, and the mode only changes the
- * word the app renders on the button. Shipping those words from here is what
- * keeps that true — the alternative is a switch statement in the Flutter app
- * that has to be updated and re-released whenever a mode is added or renamed.
- */
-
 interface ModeConfig {
   value: Mode;
   label: string;
-  /** What the app prints on the primary (like) button for this mode. */
   primary_action_label: string;
-  /** Secondary flavour text some screens use for the super-like action. */
   super_action_label: string;
   description: string;
 }
 
-/** From the Mode Selector screen in spec §1. */
 const MODES: ModeConfig[] = [
   {
     value: Mode.dating,
@@ -53,8 +37,6 @@ const MODES: ModeConfig[] = [
     label: 'Trading',
     primary_action_label: 'Trade',
     super_action_label: 'Signal',
-    // spec §1: an interest category and nothing more. Kinvo facilitates no
-    // trades, transfers, brokerage, portfolio tracking, or asset custody.
     description: 'Talk markets with people who share the interest.',
   },
   {
@@ -87,7 +69,6 @@ const MODES: ModeConfig[] = [
   },
 ];
 
-/** spec §5.7. */
 const REPORT_REASONS = [
   { value: 'harassment', label: 'Harassment or abuse' },
   { value: 'fake_profile', label: 'Fake profile' },
@@ -159,12 +140,6 @@ export interface AppConfig {
   support: SupportLinks;
 }
 
-/**
- * Where people get help and read the rules, for the app's Support screen and
- * the line on sign-up that says what signing up agrees to. Null until an
- * operator sets it, and the app shows only what is set (DECISIONS.md,
- * 25 Sep 2026).
- */
 export interface SupportLinks {
   email: string | null;
   help_url: string | null;
@@ -183,13 +158,6 @@ export function supportLinks(): SupportLinks {
   };
 }
 
-/**
- * Which ways of signing in this server can complete right now, so the app
- * offers only buttons that lead somewhere (DECISIONS.md, 25 Sep 2026). Email
- * always can. Phone is the PHONE_SIGN_IN_ENABLED switch, because only an
- * operator knows whether the Twilio account can text. Google and Apple need
- * the client ids their tokens are checked against.
- */
 export interface SignInMethods {
   email: boolean;
   phone: boolean;
@@ -222,7 +190,6 @@ export async function getAppConfig(): Promise<AppConfig> {
 
   return {
     modes: MODES,
-    // spec §1: fixed for every mode. Never per-mode action enums.
     deck_actions: ['pass', 'like', 'super_like'],
     interests,
     prompts,
@@ -232,7 +199,6 @@ export async function getAppConfig(): Promise<AppConfig> {
     limits: {
       max_interests: 10,
       max_prompts: 3,
-      // spec §7 Batch 4. Declared now so the client can build the grid.
       max_photos: 6,
       bio_max_length: 500,
       default_page_size: PAGINATION.DEFAULT_LIMIT,

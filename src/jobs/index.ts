@@ -10,29 +10,11 @@ import {
   stopDeckWorker,
 } from './deck.worker';
 
-/**
- * Job lifecycle, owned by server.ts.
- *
- * Nothing starts on import: tests import the Express app and must not open
- * BullMQ connections or run workers.
- */
 
 let scheduler: Queue | null = null;
 
-/**
- * Deck generation is scheduled just after UTC midnight, the same boundary daily
- * quotas reset on. Rolling the deck and the allowance at different times would
- * hand someone a fresh deck they have no swipes left for.
- */
 const DAILY_DECK_CRON = '10 0 * * *';
 
-/**
- * Plan reminders run every half hour, not daily.
- *
- * The reminder goes out two hours before a plan starts, so a daily sweep would
- * miss anything booked in the morning for that evening — which is most plans.
- * The sweep window is wider than this interval, so a skipped run leaves no gap.
- */
 const PLAN_REMINDER_CRON = '*/30 * * * *';
 
 export async function startJobs(): Promise<void> {

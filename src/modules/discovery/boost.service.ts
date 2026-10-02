@@ -10,14 +10,6 @@ import { logger } from '@utils/logger';
 import { countLikesYou } from './swipe.service';
 import { deckCandidateFilter, deckDateFor, requireEnabledMode } from './deck.service';
 
-/**
- * Boost and deck statistics (spec §5.3, Batch 7).
- *
- * A boost raises ranking for a window. It is a RANKING input only — it can move
- * someone up a deck they already qualified for and can never place them into a
- * deck a filter excluded them from. See `scoreCandidate` in deck.service.ts.
- */
-
 export interface BoostView {
   id: string;
   mode: Mode;
@@ -50,8 +42,6 @@ export async function startBoost(userId: string, mode: Mode): Promise<BoostView>
   const running = await activeBoost(userId, mode);
 
   if (running) {
-    // 409 rather than silently extending: stacking boosts would let one tap
-    // buy two windows, and the app needs to show the running one instead.
     throw new ApiError(ERROR_CODES.CONFLICT, 'A boost is already running in this mode.', {
       ends_at: running.ends_at,
     });
@@ -90,15 +80,6 @@ export interface DeckStats {
   swipe_quota: { limit: number; used: number; remaining: number; is_unlimited: boolean };
 }
 
-/**
- * What the app shows when the deck runs out (spec §7, Batch 7).
- *
- * Everything the empty state needs in one call rather than five: counts, what
- * is left of today's allowance, whether a boost is running, and how many people
- * are waiting in the likes-you inbox. `likes_received` is a COUNT and never the
- * profiles themselves — that list is behind a paywall, and leaking it here
- * would give the feature away.
- */
 export async function deckStats(userId: string, mode: Mode): Promise<DeckStats> {
   await requireEnabledMode(userId, mode);
   const blockedUserIds = await getBlockedUserIds(userId);

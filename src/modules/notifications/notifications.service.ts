@@ -7,18 +7,6 @@ import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 import { getEmailProvider, getPushProvider } from './providers';
 
-/**
- * Notifications (spec §5, §7, Batch 11).
- *
- * THE RULE: every notification is persisted to the feed AND pushed. Never
- * pushed alone.
- *
- * The Notifications screen reads the feed, so a push-only notification
- * disappears the instant the user swipes the banner away — and someone who
- * dismissed a "new match" banner has no other route back to it. Persisting
- * first also means push, email, and socket delivery are all best-effort: any
- * of them can fail without losing anything.
- */
 
 export interface NotificationView {
   id: string;
@@ -55,20 +43,10 @@ export interface CreateNotificationInput {
   category: NotificationCategory;
   title: string;
   body: string;
-  /** Deep-link payload. Coerced to strings for push, kept as-is in the feed. */
   data?: Record<string, unknown>;
-  /** Set for a notification the user should never receive by email. */
   emailAddress?: string | null;
 }
 
-/**
- * Per-category delivery settings, defaulted rather than required.
- *
- * A user who has never opened notification settings has no rows, and a missing
- * row must mean "the sensible default" — not "off". Defaulting to off would
- * silently disable notifications for every existing account the day this
- * shipped.
- */
 async function preferencesFor(
   userId: string,
   category: NotificationCategory,
@@ -84,11 +62,6 @@ async function preferencesFor(
   };
 }
 
-/**
- * Live tokens for a user's connected devices, each with the platform it runs
- * on — a call has to be shaped differently for Android, which must be woken up
- * to ring, than for Apple.
- */
 async function pushTokensFor(userId: string): Promise<PushTarget[]> {
   const devices = await prisma.device.findMany({
     where: { user_id: userId, revoked_at: null, fcm_token: { not: null } },
@@ -101,8 +74,6 @@ async function pushTokensFor(userId: string): Promise<PushTarget[]> {
 }
 
 function stringifyData(data: Record<string, unknown>): Record<string, string> {
-  // FCM rejects a data payload whose values are not strings, and does it with
-  // an error that names neither the key nor the type.
   return Object.fromEntries(
     Object.entries(data).map(([key, value]) => [
       key,
@@ -111,22 +82,9 @@ function stringifyData(data: Record<string, unknown>): Record<string, string> {
   );
 }
 
-/**
- * Creates a notification and attempts every enabled channel.
- *
- * Returns the persisted record. Delivery failures are logged, never thrown —
- * the caller is usually mid-way through a business action (a match forming, a
- * message sending) and must not have it fail because a banner did not arrive.
- */
 export async function notify(input: CreateNotificationInput): Promise<NotificationView> {
   const preferences = await preferencesFor(input.userId, input.category);
   const data = input.data ?? {};
-
-  // PERSIST FIRST. Everything below this line is delivery.
-  //
-  // in_app_enabled off still writes the row: the preference controls whether
-  // the app surfaces it, not whether it happened. Dropping the record instead
-  // would make "turn notifications back on" lose history.
   const notification = await prisma.notification.create({
     data: {
       user_id: input.userId,
@@ -139,7 +97,6 @@ export async function notify(input: CreateNotificationInput): Promise<Notificati
 
   const view = toView(notification);
 
-  // Socket first — a connected client updates instantly and needs no push.
   if (preferences.inApp) {
     emitToUser(input.userId, SERVER_EVENTS.NOTIFICATION_NEW, view);
   }
@@ -195,7 +152,6 @@ async function deliverPush(
   }
 }
 
-/** Notifies several people with the same content, without N round trips of setup. */
 export async function notifyMany(
   userIds: string[],
   input: Omit<CreateNotificationInput, 'userId'>,
@@ -241,8 +197,6 @@ export async function markRead(userId: string, notificationId: string): Promise<
     where: { id: notificationId, user_id: userId },
   });
 
-  // Scoped to the caller: another user's notification id is a 404, never a 403
-  // that would confirm it exists.
   if (!notification) {
     throw ApiError.notFound();
   }
@@ -288,11 +242,6 @@ const ALL_CATEGORIES: NotificationCategory[] = [
   'system',
 ];
 
-/**
- * Every category, with defaults filled in for the ones the user has never
- * touched — so the settings screen renders from one call and never has to know
- * what the defaults are.
- */
 export async function listPreferences(userId: string): Promise<PreferenceView[]> {
   const rows = await prisma.notificationPreference.findMany({ where: { user_id: userId } });
   const byCategory = new Map(rows.map((row) => [row.category, row]));
@@ -309,13 +258,6 @@ export async function listPreferences(userId: string): Promise<PreferenceView[]>
   });
 }
 
-/**
- * Safety notifications cannot be switched off.
- *
- * spec §5.7: these carry emergency and moderation outcomes. A user who muted
- * "safety" a month ago and misses the notification that someone they reported
- * was actioned is the exact failure this product cannot have.
- */
 const UNMUTABLE: NotificationCategory[] = ['safety'];
 
 export async function updatePreference(
@@ -366,12 +308,6 @@ export interface BadgeCounts {
   total: number;
 }
 
-/**
- * Counts for all five tabs in one call (spec §7, Batch 11).
- *
- * One query per tab, run together. The app polls this on resume, so five
- * separate endpoints would be five round trips on every foreground.
- */
 export async function badgeCounts(userId: string): Promise<BadgeCounts> {
   const [deckRemaining, likesReceived, unreadMessages, pendingPlans, unreadNotifications] =
     await Promise.all([

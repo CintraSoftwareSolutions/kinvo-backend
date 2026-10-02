@@ -4,17 +4,6 @@ import { UserStatus } from '@/db/prisma';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 
-/**
- * spec §5.1: onboarding is a state machine, `pending -> active`. A pending user
- * is blocked from discovery, matching, and chat with ONBOARDING_INCOMPLETE.
- *
- * This is also the gate that makes social and phone signup safe: those accounts
- * are created without a date of birth, so they stay pending — and therefore
- * out of the product — until onboarding supplies one and the under-18 check
- * runs. Every discovery, matching, and chat route must sit behind this.
- *
- * Must be mounted after `authenticate`.
- */
 export const requireOnboarded: RequestHandler = (req, _res, next) => {
   const user = req.user;
 

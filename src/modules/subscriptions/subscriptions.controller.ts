@@ -6,8 +6,6 @@ import type { TestPurchaseBody } from './subscriptions.schema';
 import * as subscriptionsService from './subscriptions.service';
 import * as testPurchases from './test-purchases.service';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function listProducts(_req: Request, res: Response): Promise<void> {
   const products = await subscriptionsService.listProducts();
 

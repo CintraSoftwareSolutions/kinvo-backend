@@ -13,38 +13,23 @@ import { requestLogger } from '@middleware/request-logger';
 import { healthRouter } from '@modules/health/health.routes';
 import { apiRouter } from '@/routes';
 
-/**
- * Builds the Express app without binding a port, so Supertest can drive it
- * in-process and tests never race over a socket.
- */
 export function createApp(): Express {
   const app = express();
 
   app.disable('x-powered-by');
-  // Behind a load balancer; needed for correct client IPs in rate limiting (Batch 2).
   app.set('trust proxy', 1);
-
-  // First, so every later log line and error response carries the correlation id.
   app.use(requestId);
 
   app.use(helmet());
   app.use(
     cors({
       origin: env.CORS_ORIGINS.includes('*') ? true : env.CORS_ORIGINS,
-      // Spec 4.3: bearer tokens in headers, not cookies — no credentials needed.
       credentials: false,
       exposedHeaders: ['X-Request-Id', 'Retry-After', 'X-RateLimit-Limit', 'X-RateLimit-Remaining'],
     }),
   );
   app.use(compression());
 
-  // The video callback is verified against a sha256 of the RAW body, so this
-  // one path must see the bytes exactly as sent: a parsed and re-serialised
-  // body does not hash to the same value, and every callback would be refused.
-  //
-  // Ahead of the JSON parser rather than instead of it — body-parser marks a
-  // request it has read, so the parser below leaves this one alone and every
-  // other route is unaffected.
   app.use(`${API_PREFIX}/webhooks/video`, express.raw({ type: '*/*', limit: env.JSON_BODY_LIMIT }));
 
   app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
@@ -53,14 +38,8 @@ export function createApp(): Express {
 
   app.use(requestLogger);
 
-  // Unversioned alias for load balancers and container probes, which cannot be
-  // told to follow an API version. Deliberately ahead of the rate limiter —
-  // probes poll continuously and must never be throttled.
   app.use('/health', healthRouter);
 
-  // A ceiling under every versioned route (spec §4.9). Routes that need
-  // tighter bounds add their own limiter on top; this is here so that
-  // forgetting to add one is not an unbounded endpoint.
   app.use(API_PREFIX, generalRateLimit, apiRouter);
 
   app.use(notFound);

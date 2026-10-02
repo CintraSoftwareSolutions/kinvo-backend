@@ -6,20 +6,6 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { assertAdult } from '@utils/age';
 import { logger } from '@utils/logger';
 
-/**
- * Onboarding (spec §5.1): a state machine, `pending -> active`, that only
- * advances when the required fields are present.
- *
- * This is the gate that makes the under-18 rule work for social and phone
- * signups. Those accounts are created with no date of birth, so they cannot
- * complete onboarding, so `requireOnboarded` keeps them out of discovery,
- * matching, and chat until a date of birth exists and passes the check.
- *
- * The requirements are a declared checklist rather than scattered conditionals,
- * because later batches add to them: Batch 4 adds "at least one approved photo"
- * and Batch 5 adds "at least one enabled mode". Adding a requirement should be
- * one entry here, not a rewrite of the transition.
- */
 
 export interface OnboardingStep {
   key: string;
@@ -103,12 +89,6 @@ export async function getOnboardingStatus(userId: string): Promise<OnboardingSta
   };
 }
 
-/**
- * Advances `pending -> active`.
- *
- * Idempotent: completing twice is a no-op rather than an error, because a
- * retried request on a flaky mobile connection must not read as a failure.
- */
 export async function completeOnboarding(userId: string): Promise<OnboardingStatus> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -137,9 +117,6 @@ export async function completeOnboarding(userId: string): Promise<OnboardingStat
     );
   }
 
-  // spec §5.1: the legal check runs wherever a date of birth is used to admit
-  // someone, not only at email registration. A social signup reaches the
-  // product for the first time here.
   if (!user.date_of_birth) {
     throw ApiError.validation({ date_of_birth: ['Enter your date of birth.'] });
   }
@@ -155,11 +132,6 @@ export async function completeOnboarding(userId: string): Promise<OnboardingStat
   return getOnboardingStatus(userId);
 }
 
-/**
- * Sets a date of birth for an account that has none, applying the under-18
- * check. Refuses to change one that is already set — a birth date is not
- * something a user edits freely, and letting them would reopen the age gate.
- */
 export async function setDateOfBirth(userId: string, isoDate: string): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },

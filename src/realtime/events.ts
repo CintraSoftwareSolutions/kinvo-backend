@@ -2,21 +2,6 @@ import { z } from 'zod';
 
 import { CallKind, MessageType, Mode, NotificationCategory } from '@/db/prisma';
 
-/**
- * The realtime contract (spec §7, Batch 9).
- *
- * "Socket events must have documented payload shapes — the Flutter team needs
- * them as much as the REST contract." So the shapes are Zod schemas, not
- * hand-written prose: they validate incoming payloads at runtime AND generate
- * the published documentation, which means the docs cannot describe a shape the
- * server does not accept.
- *
- * DURABILITY RULE (spec §7): persist first, then emit. Every server-to-client
- * event below describes something already committed to Postgres. A socket
- * delivery that is lost costs a client a refresh, never a message. Nothing in
- * this system treats an emit as a write.
- */
-
 // ---------------------------------------------------------------------------
 // Client -> server
 // ---------------------------------------------------------------------------
@@ -36,7 +21,6 @@ export const CLIENT_EVENT_SCHEMAS = {
   [CLIENT_EVENTS.TYPING_START]: conversationRef,
   [CLIENT_EVENTS.TYPING_STOP]: conversationRef,
   [CLIENT_EVENTS.CONVERSATION_READ]: conversationRef,
-  /** Keeps `last_active_at` fresh while the app is open but idle. */
   [CLIENT_EVENTS.PRESENCE_PING]: z.object({}).strict(),
 } as const satisfies Record<ClientEvent, z.ZodTypeAny>;
 
@@ -70,12 +54,10 @@ const userCompactShape = z.object({
   is_verified: z.boolean(),
   is_premium: z.boolean(),
   is_online: z.boolean(),
-  /** Null when they have chosen not to show when they were last active. */
   last_active_at: z.string().nullable(),
 });
 
 export const SERVER_EVENT_SCHEMAS = {
-  /** A message was persisted. The REST payload shape, unchanged. */
   [SERVER_EVENTS.MESSAGE_NEW]: z.object({
     id: z.string().uuid(),
     conversation_id: z.string().uuid(),
@@ -91,17 +73,12 @@ export const SERVER_EVENT_SCHEMAS = {
     created_at: z.string(),
   }),
 
-  /** The other participant read up to `read_at`. Update the ticks. */
   [SERVER_EVENTS.MESSAGE_READ]: z.object({
     conversation_id: z.string().uuid(),
     reader_id: z.string().uuid(),
     read_at: z.string(),
   }),
 
-  /**
-   * Ephemeral and never persisted — the one thing in this system that is
-   * genuinely fire-and-forget. A lost typing indicator costs nothing.
-   */
   [SERVER_EVENTS.TYPING]: z.object({
     conversation_id: z.string().uuid(),
     user_id: z.string().uuid(),
@@ -118,7 +95,6 @@ export const SERVER_EVENT_SCHEMAS = {
     user: userCompactShape,
   }),
 
-  /** Unread moved. Cheaper than refetching the list to update one badge. */
   [SERVER_EVENTS.CONVERSATION_UPDATED]: z.object({
     conversation_id: z.string().uuid(),
     unread_count: z.number().int(),
@@ -126,27 +102,16 @@ export const SERVER_EVENT_SCHEMAS = {
     last_message_preview: z.string().nullable(),
   }),
 
-  /**
-   * Only ever delivered to people with an active match with this user, and
-   * never to anyone on either side of a block.
-   */
   [SERVER_EVENTS.PRESENCE_UPDATE]: z.object({
     user_id: z.string().uuid(),
     is_online: z.boolean(),
-    /** Null, with is_online false, once they stop showing their activity. */
     last_active_at: z.string().nullable(),
   }),
 
-  /**
-   * The user's plan changed — a purchase cleared, a subscription lapsed. Re-read
-   * `GET /me/entitlements`; this event carries the tier but never the flags, so
-   * there is one authority on what a plan includes.
-   */
   [SERVER_EVENTS.ENTITLEMENTS_UPDATED]: z.object({
     tier: z.string(),
   }),
 
-  /** A notification was added to the feed. The same shape GET /notifications lists. */
   [SERVER_EVENTS.NOTIFICATION_NEW]: z.object({
     id: z.string().uuid(),
     category: z.nativeEnum(NotificationCategory),
@@ -157,49 +122,27 @@ export const SERVER_EVENT_SCHEMAS = {
     created_at: z.string(),
   }),
 
-  /**
-   * Someone you matched with is calling. This is what makes the callee's phone
-   * ring, so it is the one event a client must handle before it has fetched
-   * anything.
-   *
-   * The push notification carries the same call_id. A client that receives both
-   * must treat them as one call, not two.
-   */
   [SERVER_EVENTS.CALL_INCOMING]: z.object({
     call_id: z.string().uuid(),
     match_id: z.string().uuid(),
     mode: z.nativeEnum(Mode),
-    /**
-     * `video` or `audio`. Answering an `audio` call must not open the camera:
-     * this is the only thing the ringing phone knows before it picks up, so a
-     * client that ignores it turns a voice call into a video one.
-     */
     kind: z.nativeEnum(CallKind),
     from: userCompactShape,
   }),
 
-  /** The callee picked up. Stop the ringing UI and connect to the room. */
   [SERVER_EVENTS.CALL_ANSWERED]: z.object({
     call_id: z.string().uuid(),
   }),
 
-  /** The callee refused. Distinct from ended so the caller can say so. */
   [SERVER_EVENTS.CALL_DECLINED]: z.object({
     call_id: z.string().uuid(),
   }),
 
-  /**
-   * The other side hung up, or a safety action ended the call.
-   *
-   * duration_seconds is null when the call was never answered — a missed call
-   * has no duration, and zero would read as a call that connected silently.
-   */
   [SERVER_EVENTS.CALL_ENDED]: z.object({
     call_id: z.string().uuid(),
     duration_seconds: z.number().int().nullable(),
   }),
 
-  /** Same code vocabulary as REST, so the client branches on one enum. */
   [SERVER_EVENTS.ERROR]: z.object({
     code: z.string(),
     message: z.string(),
@@ -222,7 +165,6 @@ export type CallIncomingPayload = z.infer<
   (typeof SERVER_EVENT_SCHEMAS)[typeof SERVER_EVENTS.CALL_INCOMING]
 >;
 
-/** Prose for the published documentation, kept beside the shapes it describes. */
 export const EVENT_DESCRIPTIONS: Record<string, string> = {
   [CLIENT_EVENTS.TYPING_START]: 'Tell the other participant you are typing. Not persisted.',
   [CLIENT_EVENTS.TYPING_STOP]:

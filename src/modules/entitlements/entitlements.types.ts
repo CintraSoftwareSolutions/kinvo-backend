@@ -1,15 +1,3 @@
-/**
- * The entitlement vocabulary (spec §5.11).
- *
- * These keys are the single source of truth: the seed imports them to build the
- * matrix and the resolver imports them to read it. Defining the strings twice
- * would let a typo in one file silently produce a flag that is always missing —
- * which fails open or closed depending on the call site, and never loudly.
- *
- * Adding a feature flag is: one entry here, one row in the seed. No code
- * branches on a tier name anywhere in this codebase.
- */
-
 export const ENTITLEMENT_KEYS = {
   STANDARD_DISCOVERY: 'standard_discovery',
   DAILY_SWIPE_LIMIT: 'daily_swipe_limit',
@@ -26,12 +14,6 @@ export const ENTITLEMENT_KEYS = {
 
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[keyof typeof ENTITLEMENT_KEYS];
 
-/**
- * Declared value types, checked against the seeded rows at resolve time. A row
- * whose stored JSON disagrees with this table is a broken seed, and it is far
- * better to find out at the boundary than to have `50` arrive somewhere that
- * expected a boolean and be quietly truthy.
- */
 export const FLAG_VALUE_TYPES: Record<EntitlementKey, 'boolean' | 'number'> = {
   standard_discovery: 'boolean',
   daily_swipe_limit: 'number',
@@ -48,10 +30,8 @@ export const FLAG_VALUE_TYPES: Record<EntitlementKey, 'boolean' | 'number'> = {
 
 export const ALL_ENTITLEMENT_KEYS = Object.values(ENTITLEMENT_KEYS);
 
-/** Numeric flags use -1 for "no limit" (spec §5.11). */
 export const UNLIMITED = -1;
 
-/** Every flag for one tier, keyed by flag key. */
 export type EntitlementMap = Record<EntitlementKey, boolean | number>;
 
 export interface QuotaState {
@@ -59,6 +39,5 @@ export interface QuotaState {
   used: number;
   remaining: number;
   is_unlimited: boolean;
-  /** UTC midnight, when the counter resets (spec §5.11). */
   resets_at: string;
 }

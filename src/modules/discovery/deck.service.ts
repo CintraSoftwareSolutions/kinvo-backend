@@ -11,48 +11,23 @@ import { type CursorPayload, decodeCursor, paginate } from '@utils/cursor';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 
-/**
- * Deck generation (spec §5.3, Batch 7).
- *
- * Decks are precomputed per user, per mode, per day. Two reasons, both
- * load-bearing:
- *
- *  1. Pagination is stable. Re-running a ranking algorithm on every scroll
- *     means a card can move between pages and be seen twice or never.
- *  2. The algorithm runs once a day per user instead of once per scroll.
- *
- * EVERY filter below is mode-scoped. The same person may be an excellent
- * study-buddy candidate and someone this user already passed on in dating, and
- * those two facts must never leak into each other.
- */
 
 export interface DeckCard {
   entry_id: string;
   position: number;
-  /** spec §4.6: metres. The client formats to miles. */
   distance_metres: number | null;
   user: UserCompact;
-  /**
-   * Their approved photos, in order. The card carries the album rather than
-   * the one photo on `user`, because looking through someone's pictures is
-   * the decision this screen exists to support — fetching the rest per card
-   * would be the N+1 spec §4.7 forbids, and asking for them only when a card
-   * is opened would make the first swipe wait on a request.
-   */
   photos: PublicPhotoView[];
   bio: string | null;
   interests: string[];
 }
 
-/** The viewer's mode row, or a clear error. Shared with the swipe service. */
 export async function requireEnabledMode(userId: string, mode: Mode): Promise<UserModeModel> {
   const userMode = await prisma.userMode.findUnique({
     where: { user_id_mode: { user_id: userId, mode } },
   });
 
   if (!userMode || !userMode.is_enabled) {
-    // Not 404: the mode plainly exists and the app knows it. This is the user
-    // needing to turn it on, which is an action they can take.
     throw new ApiError(
       ERROR_CODES.BAD_REQUEST,
       'Turn this mode on before browsing it.',
@@ -64,16 +39,6 @@ export async function requireEnabledMode(userId: string, mode: Mode): Promise<Us
   return userMode;
 }
 
-/**
- * Ranking (spec §5.3).
- *
- * Pure so it can be unit-tested without a database, and so the weighting is
- * legible in one place rather than buried in an ORDER BY.
- *
- * Ranking is NOT filtering. A verified badge or an active boost moves someone
- * up the deck; neither can put someone into a deck they were excluded from.
- * Conflating the two is how a boost would start bypassing a block.
- */
 export function scoreCandidate(input: {
   isVerified: boolean;
   isBoosted: boolean;
@@ -105,15 +70,6 @@ export function scoreCandidate(input: {
   return Math.round(score * 100) / 100;
 }
 
-/**
- * Who may be on someone's deck in `mode`, judged on the people themselves.
- *
- * Applied when a deck is built AND every time one is read. Decks are built once
- * a day, and reading them without this kept showing people who had since taken
- * a break, blocked the viewer, turned the mode off, or been suspended or
- * deleted — with their photo — until midnight UTC. The viewer's own filters
- * (radius, ages, verified only) are not here: changing those discards the deck.
- */
 export function deckCandidateFilter(
   viewerId: string,
   mode: Mode,
@@ -141,18 +97,10 @@ export function deckCandidateFilter(
   };
 }
 
-/** UTC date, because deck days and quota days must roll over together. */
 export function deckDateFor(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
-/**
- * Builds and persists one day's deck.
- *
- * Idempotent per (user, mode, day): calling it again replaces the entries that
- * have not been swiped yet and leaves consumed ones alone, so a regeneration
- * cannot resurrect a card the user already acted on.
- */
 export async function generateDeck(userId: string, mode: Mode, now: Date = new Date()) {
   const userMode = await requireEnabledMode(userId, mode);
 
@@ -327,13 +275,6 @@ async function persistDeck(userId: string, mode: Mode, now: Date, entries: Entry
   });
 }
 
-/**
- * One page of the deck, generating today's if it does not exist yet.
- *
- * Lazy generation is what makes the BullMQ precompute an optimisation rather
- * than a dependency: if the scheduled job has not run, or is behind, the user
- * still gets a correct deck rather than an empty screen.
- */
 export async function getDeck(
   userId: string,
   mode: Mode,
@@ -419,20 +360,6 @@ export async function getDeck(
   };
 }
 
-/**
- * Throws away today's deck for one mode, so the next read builds a new one.
- *
- * For when what the deck is built FROM changes — radius, age range,
- * verified-only. Decks are precomputed per day, so without this a user who
- * narrows their radius to 5 km keeps being shown people 30 km away until
- * midnight UTC, which reads as the filter being broken.
- *
- * Deleted rather than regenerated here: the rebuild happens lazily on the next
- * read, like any day's first read, so changing the filters of a mode the user
- * is not browsing costs nothing. Consumed entries go with it and nothing is
- * lost — `generateDeck` keeps already-swiped people out using the swipes
- * table, never the deck.
- */
 export async function discardTodaysDeck(
   userId: string,
   mode: Mode,
@@ -444,17 +371,11 @@ export async function discardTodaysDeck(
   });
 }
 
-/**
- * Every deck the user has today, in every mode — for a change that decides
- * who is in all of them at once, such as verified people only everywhere.
- */
 export async function discardTodaysDecks(userId: string, now: Date = new Date()): Promise<void> {
   await prisma.deck.deleteMany({
     where: { user_id: userId, deck_date: deckDateFor(now) },
   });
 }
-
-/** Marks the card as acted upon, so it never returns to the deck. */
 export async function consumeDeckEntry(
   tx: Prisma.TransactionClient,
   userId: string,
@@ -472,7 +393,6 @@ export async function consumeDeckEntry(
   });
 }
 
-/** Rewind puts the card back where it was (spec §5.3). */
 export async function restoreDeckEntry(
   tx: Prisma.TransactionClient,
   userId: string,
@@ -485,7 +405,6 @@ export async function restoreDeckEntry(
   });
 }
 
-/** Used by the nightly job; exported so the worker holds no query logic. */
 export async function usersNeedingDecks(mode: Mode, limit = 1000): Promise<string[]> {
   const rows = await prisma.userMode.findMany({
     where: {

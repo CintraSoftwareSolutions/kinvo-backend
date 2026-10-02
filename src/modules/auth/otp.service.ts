@@ -4,28 +4,11 @@ import { getOtpProvider } from '@/providers/twilio.provider';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 
-/**
- * Phone OTP via Twilio Verify (spec §2, §7 Batch 2).
- *
- * Twilio owns the code — generation, storage, expiry, and attempt counting all
- * happen there, so no OTP secret ever touches our database.
- *
- * Like social sign-in, a phone number carries no date of birth. A new number
- * therefore creates a `pending` account, blocked from the product until Batch
- * 3's onboarding supplies a date of birth and applies the under-18 rejection.
- */
-
 export interface OtpVerifyResult {
   user_id: string;
   is_new_user: boolean;
 }
 
-/**
- * Refuses while phone sign-in is switched off (`PHONE_SIGN_IN_ENABLED`),
- * before Twilio is called. Worded as the refusal from a Twilio account that
- * cannot text, so an app build that still shows the button says the same
- * thing either way: use email.
- */
 function assertPhoneSignInEnabled(): void {
   if (!env.PHONE_SIGN_IN_ENABLED) {
     throw new ApiError(
@@ -35,12 +18,6 @@ function assertPhoneSignInEnabled(): void {
   }
 }
 
-/**
- * Sends a code.
- *
- * Deliberately does not reveal whether the number is registered — the response
- * is identical either way, so this cannot be used to enumerate users.
- */
 export async function sendOtp(phone: string): Promise<void> {
   assertPhoneSignInEnabled();
   await getOtpProvider().sendCode(phone);
@@ -92,10 +69,6 @@ export async function verifyOtp(
   return { user_id: user.id, is_new_user: true };
 }
 
-/**
- * Attaches a verified phone number to an account that already exists.
- * Used by the settings flow rather than sign-in.
- */
 export async function attachVerifiedPhone(
   userId: string,
   phone: string,

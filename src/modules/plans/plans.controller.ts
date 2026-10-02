@@ -12,8 +12,6 @@ import type {
   UpdatePlanBody,
 } from './plans.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function listPlans(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const { limit, cursor, tab, drafts } = req.query as unknown as ListPlansQuery;

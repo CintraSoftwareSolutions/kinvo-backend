@@ -3,8 +3,6 @@ import { z } from 'zod';
 import { PAGINATION } from '@config/constants';
 import { MessageType, Mode } from '@/db/prisma';
 
-/** Chat request validation (spec §4.10, Batch 8). */
-
 export const conversationIdParamSchema = z
   .object({ id: z.string().uuid('Expected a conversation id.') })
   .strict();
@@ -40,15 +38,6 @@ export const messagesQuerySchema = z
   })
   .strict();
 
-/**
- * spec §5.4: text, image, video, voice_note, venue_card. Voice notes carry
- * duration.
- *
- * The cross-field rules — a text message needs a body, a media message needs an
- * upload — are enforced in the service rather than here, because the media
- * check has to hit the database anyway (ownership, completion, kind) and
- * splitting the rule across two layers is how the halves drift apart.
- */
 export const sendMessageSchema = z
   .object({
     type: z.nativeEnum(MessageType).default(MessageType.text),
@@ -56,20 +45,7 @@ export const sendMessageSchema = z
     media_asset_id: z.string().uuid().optional(),
     venue_id: z.string().uuid().optional(),
     duration_ms: z.number().int().positive().max(600_000).optional(),
-    /**
-     * spec §5.4: set by the client after the user pushes past a pre-send
-     * warning. Never a way to skip the check — Batch 10 runs moderation
-     * server-side regardless of what arrives here.
-     */
     moderation_overridden: z.boolean().optional(),
-    /**
-     * What the app calls this message before it has an id. Sending the same
-     * one twice returns the message that already exists rather than making a
-     * second — a send that times out has usually arrived, and trying again is
-     * what any app does next.
-     *
-     * A uuid, so two devices cannot pick the same one.
-     */
     client_token: z.string().uuid('A client token must be a uuid.').optional(),
   })
   .strict()

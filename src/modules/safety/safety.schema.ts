@@ -3,8 +3,6 @@ import { z } from 'zod';
 import { PAGINATION } from '@config/constants';
 import { EmergencyEventType, ReportReason, ReportStatus } from '@/db/prisma';
 
-/** Safety request validation (spec §4.10, §5.7, Batch 12). */
-
 export const listQuerySchema = z
   .object({
     limit: z.coerce
@@ -23,12 +21,9 @@ export const createReportSchema = z
     reported_id: z.string().uuid('Expected a user id.'),
     reason: z.nativeEnum(ReportReason),
     description: z.string().trim().max(1000).optional(),
-    /** What was being looked at when they reported: profile, message, call, plan. */
     context_type: z.enum(['profile', 'message', 'call', 'plan']).optional(),
     context_id: z.string().uuid().optional(),
-    /** spec §5.7: blocks atomically on submit. */
     also_block: z.boolean().optional(),
-    /** Completed uploads of kind report_evidence. */
     evidence_asset_ids: z.array(z.string().uuid()).max(5).optional(),
   })
   .strict();
@@ -62,10 +57,6 @@ export const createContactSchema = z
   })
   .strict();
 
-/**
- * An empty phone, email or relationship clears it, so an edit can take one
- * away. The contact must still keep a phone or an email.
- */
 export const updateContactSchema = createContactSchema
   .extend({
     phone: z.union([z.literal(''), z.string().trim().min(5).max(32)]),
@@ -93,11 +84,6 @@ export const startSharingSchema = z
 export const pingSchema = coordinate
   .extend({ accuracy_metres: z.number().int().min(0).max(10_000).optional() })
   .strict();
-
-/**
- * The phone's offset from UTC, in minutes, so times in emails to trusted
- * contacts read as the user's own. The server knows nobody's time zone.
- */
 export const utcOffsetMinutes = z.number().int().min(-720).max(840);
 
 export const emergencySchema = z

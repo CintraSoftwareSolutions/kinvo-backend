@@ -13,9 +13,6 @@ import type {
 } from './users.schema';
 import * as users from './users.service';
 
-/**
- * HTTP translation only — no business logic, no database access (spec §0.5).
- */
 
 export async function getMe(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);

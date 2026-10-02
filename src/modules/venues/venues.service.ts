@@ -2,14 +2,6 @@ import { MatchStatus, type Mode, type VenueCategory, prisma } from '@/db/prisma'
 import { type Coordinates, findVenuesWithinRadius, getProfileCoordinates } from '@/db/geo';
 import { ApiError } from '@utils/api-error';
 
-/**
- * Venues (spec §5.9, Batch 12).
- *
- * Admin-curated, not user-generated: the list is a safety surface as much as a
- * convenience one, because it is where the product suggests two strangers meet.
- * Creating and editing venues belongs to the admin module in Batch 15.
- */
-
 const DEFAULT_RADIUS_METRES = 10_000;
 const MAX_RADIUS_METRES = 50_000;
 
@@ -25,7 +17,6 @@ export interface VenueView {
   photo_url: string | null;
   website_url: string | null;
   modes: Mode[];
-  /** spec §4.6: metres. The client formats to miles. */
   distance_metres: number | null;
   is_saved: boolean;
 }
@@ -94,19 +85,10 @@ export interface SearchVenuesOptions {
   mode?: Mode;
   radius_metres?: number;
   limit?: number;
-  /** Overrides the caller's profile location, for browsing another area. */
   latitude?: number;
   longitude?: number;
 }
 
-/**
- * Nearby venues, nearest first (spec §5.9).
- *
- * Distance sorting comes from PostGIS; category and mode filtering happen in
- * Prisma on the result. Splitting it that way keeps the spatial query in
- * `geo.ts` free of business filters, which is the rule that has kept spatial
- * SQL in one file for twelve batches.
- */
 export async function searchVenues(
   userId: string,
   options: SearchVenuesOptions,
@@ -184,7 +166,6 @@ export async function getVenue(userId: string, venueId: string): Promise<VenueVi
   return toView(venue, null, saved);
 }
 
-/** "Save for later" — a per-user list (spec §5.9). Idempotent. */
 export async function saveVenue(userId: string, venueId: string): Promise<void> {
   const venue = await prisma.venue.findFirst({
     where: { id: venueId, is_active: true },
@@ -224,14 +205,6 @@ export async function listSavedVenues(userId: string): Promise<VenueView[]> {
   return saved.map((row) => toView(row.venue, null, ids));
 }
 
-/**
- * Venues to suggest to a match, tuned to the mode they share (spec §5.9).
- *
- * Centred on the CALLER's location rather than a midpoint. A midpoint sounds
- * fairer but requires reading the other person's coordinates to compute, and
- * exposing where someone lives — even indirectly, through which venues appear —
- * is not worth the convenience.
- */
 export async function suggestForMatch(
   userId: string,
   matchId: string,

@@ -2,35 +2,12 @@ import { redis } from '@/db/redis';
 import { prisma } from '@/db/prisma';
 import { logger } from '@utils/logger';
 
-/**
- * Presence (spec §7, Batch 9).
- *
- * Online state lives in Redis, not Postgres. It changes on every connect and
- * disconnect — writing that to a durable store would produce more writes than
- * the rest of the product combined, for a fact that is worthless the moment the
- * process restarts.
- *
- * `last_active_at` is the opposite: it belongs in Postgres because it is shown
- * on profiles long after the socket is gone. It is written on a throttle rather
- * than on every event.
- */
-
 const PRESENCE_PREFIX = 'presence:';
 
-/**
- * A presence key outlives its socket by this much.
- *
- * A user switching networks or locking their phone drops the socket and
- * reconnects seconds later. Without the grace period every commuter flickers
- * offline and online, and every one of those flickers is an event fanned out to
- * their matches.
- */
 const PRESENCE_TTL_SECONDS = 90;
 
-/** How often a live connection refreshes the key and last_active_at. */
 export const PRESENCE_HEARTBEAT_SECONDS = 45;
 
-/** Postgres write throttle — a ping every 45s must not be a row update every 45s. */
 const LAST_ACTIVE_THROTTLE_MS = 5 * 60 * 1000;
 
 const lastWrittenAt = new Map<string, number>();
@@ -39,12 +16,6 @@ function key(userId: string): string {
   return `${PRESENCE_PREFIX}${userId}`;
 }
 
-/**
- * Counts CONNECTIONS, not users.
- *
- * One person may have a phone and a tablet open. Tracking a boolean would let
- * closing one device mark them offline while the other is still connected.
- */
 export async function markOnline(userId: string, socketId: string): Promise<void> {
   try {
     await redis.sadd(key(userId), socketId);
@@ -90,12 +61,6 @@ export async function isOnline(userId: string): Promise<boolean> {
   }
 }
 
-/**
- * Online state for many users in one round trip.
- *
- * Every list that returns `user_compact` needs this, and doing it per row would
- * be the same N+1 that compact objects exist to prevent (spec §4.7).
- */
 export async function onlineStatusFor(userIds: string[]): Promise<Set<string>> {
   if (userIds.length === 0) {
     return new Set();
@@ -124,13 +89,6 @@ export async function onlineStatusFor(userIds: string[]): Promise<Set<string>> {
   }
 }
 
-/**
- * Updates `last_active_at`, at most once per throttle window per user.
- *
- * The in-process map means each instance throttles independently, so a user on
- * several instances writes a few times rather than once. That is fine — the
- * point is bounding writes, not making them exactly once.
- */
 export async function touchLastActive(userId: string, now = Date.now()): Promise<void> {
   const previous = lastWrittenAt.get(userId) ?? 0;
 
@@ -150,7 +108,6 @@ export async function touchLastActive(userId: string, now = Date.now()): Promise
   }
 }
 
-/** Test helper: the throttle map is process state and outlives a truncate. */
 export function resetPresenceThrottle(): void {
   lastWrittenAt.clear();
 }

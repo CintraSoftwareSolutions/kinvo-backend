@@ -9,19 +9,6 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { claimAsset } from './media.service';
 import type { PhotoView } from './media.types';
 
-/**
- * Profile photos (spec §7, Batch 4: photo CRUD, reorder, set primary, max 6).
- *
- * The primary photo is always the first one. Reordering makes the new first
- * photo primary, and setting a primary moves it to the front, so neither can
- * undo the other.
- *
- * Photos are their own table rather than rows in MediaAsset because they are
- * read on every deck card and every list; a join through a generic asset table
- * would be a self-inflicted N+1 (spec §4.7). The MediaAsset row remains as the
- * upload ledger, and the bucket and key are copied here on attach.
- */
-
 export const MAX_PHOTOS = 6;
 
 interface PhotoRow {
@@ -70,12 +57,6 @@ export interface AddPhotoInput {
   height?: number;
 }
 
-/**
- * Attaches a completed upload as a profile photo.
- *
- * The first photo becomes primary automatically — a profile with photos but no
- * primary would render a blank deck card.
- */
 export async function addPhoto(userId: string, input: AddPhotoInput): Promise<PhotoView> {
   const profileId = await ensureProfile(userId);
 
@@ -123,14 +104,6 @@ export async function addPhoto(userId: string, input: AddPhotoInput): Promise<Ph
       size_bytes: asset.size_bytes,
       width: input.width ?? null,
       height: input.height ?? null,
-      // Photos go live and are reviewed AFTER the fact (spec §7, Batch 10:
-      // "post-hoc scanning queue"). The alternative — every photo pending until
-      // a human looks — means nobody can finish onboarding until a moderator is
-      // awake, which is not a product.
-      //
-      // The safety net is the flag raised below: rules-based v1 cannot read
-      // pixels, so every photo is queued for a person rather than quietly
-      // marked clean. A moderator rejecting one hides it immediately.
       moderation_status: ModerationStatus.approved,
     },
   });
@@ -152,16 +125,6 @@ export async function addPhoto(userId: string, input: AddPhotoInput): Promise<Ph
   return toPhotoView(photo);
 }
 
-/**
- * Removes a photo and closes the gap in the ordering.
- *
- * Soft delete keeps the row for moderation history. The partial unique indexes
- * from Batch 1 exclude soft-deleted rows, so the freed position and primary
- * slot become available again immediately.
- *
- * Once onboarding is done the last photo cannot go: onboarding requires one,
- * and without it every deck card and match row would show a blank.
- */
 export async function deletePhoto(userId: string, photoId: string): Promise<void> {
   const profileId = await ensureProfile(userId);
 
@@ -210,13 +173,6 @@ export async function deletePhoto(userId: string, photoId: string): Promise<void
   await deleteObject({ bucket: photo.s3_bucket as BucketName, key: photo.s3_key });
 }
 
-/**
- * Reorders photos to exactly the given sequence.
- *
- * Positions are moved to a temporary negative range first. The partial unique
- * index on (profile_id, position) would otherwise reject any swap that passes
- * through a duplicate position mid-update, which every reorder does.
- */
 export async function reorderPhotos(userId: string, photoIds: string[]): Promise<PhotoView[]> {
   const profileId = await ensureProfile(userId);
   const photos = await livePhotos(profileId);
@@ -259,13 +215,6 @@ export async function reorderPhotos(userId: string, photoIds: string[]): Promise
   return Promise.all((await livePhotos(profileId)).map(toPhotoView));
 }
 
-/**
- * Makes one photo primary by moving it to the front; the rest keep their order
- * behind it.
- *
- * Promoting it where it stood left the primary somewhere in the middle, and
- * the next reorder, which makes the first photo primary, quietly undid it.
- */
 export async function setPrimaryPhoto(userId: string, photoId: string): Promise<PhotoView[]> {
   const profileId = await ensureProfile(userId);
   const photos = await livePhotos(profileId);
@@ -289,18 +238,6 @@ async function isOnboarded(userId: string): Promise<boolean> {
   return Boolean(user?.onboarded_at);
 }
 
-/**
- * The primary photo URL for a user, as shown to someone else.
- *
- * Returns null unless a photo exists AND moderation has approved it — spec §4.8
- * says pending media is visible to its owner and nobody else, and a deck card
- * is the clearest place that rule could be broken.
- *
- * Nothing calls this today: a screen showing one person now shows their whole
- * album through {@link getApprovedPhotosFor}, whose first entry is this photo.
- * Kept because a caller wanting one photo and no album is a reasonable thing
- * to want, and because it is what the bulk version below is the plural of.
- */
 export async function getPrimaryPhotoUrlFor(userId: string): Promise<string | null> {
   const photo = await prisma.photo.findFirst({
     where: {
@@ -319,17 +256,6 @@ export async function getPrimaryPhotoUrlFor(userId: string): Promise<string | nu
   return presignDownload({ bucket: photo.s3_bucket as BucketName, key: photo.s3_key });
 }
 
-/**
- * Someone else's photo, as everyone but its owner sees it.
- *
- * Deliberately smaller than `PhotoView`: no moderation status, because that is
- * the owner's business and a viewer is only ever shown approved photos anyway,
- * and no `is_primary`, because the list is ordered and the first one IS the
- * primary.
- *
- * Width and height travel with it so the app can hold the right shape of space
- * while the picture loads, instead of the layout jumping when it arrives.
- */
 export interface PublicPhotoView {
   id: string;
   url: string;
@@ -352,13 +278,6 @@ async function toPublicPhotoView(photo: {
   };
 }
 
-/**
- * Everyone's approved photos, in the order they arranged them.
- *
- * Spec §4.8: pending media is visible to its owner and nobody else, so a photo
- * still in moderation is absent here even though its owner can see it in their
- * own album.
- */
 export async function getApprovedPhotosFor(userId: string): Promise<PublicPhotoView[]> {
   const photos = await prisma.photo.findMany({
     where: {
@@ -373,14 +292,6 @@ export async function getApprovedPhotosFor(userId: string): Promise<PublicPhotoV
   return Promise.all(photos.map(toPublicPhotoView));
 }
 
-/**
- * The same, for many users at once.
- *
- * A deck page asking per card is the N+1 that spec §4.7 exists to prevent, and
- * the presigning itself is local work, so one query and one pass covers a whole
- * page. Users with no approved photos are absent from the map; callers use
- * `?? []`, never a missing key (spec §4.6).
- */
 export async function getApprovedPhotosForMany(
   userIds: string[],
 ): Promise<Map<string, PublicPhotoView[]>> {
@@ -415,7 +326,6 @@ export async function getApprovedPhotosForMany(
   return byUser;
 }
 
-/** Batch 5 will require at least one approved photo before onboarding completes. */
 export async function countApprovedPhotos(userId: string): Promise<number> {
   return prisma.photo.count({
     where: {
@@ -426,16 +336,6 @@ export async function countApprovedPhotos(userId: string): Promise<number> {
   });
 }
 
-/**
- * Primary photo URLs for many users at once.
- *
- * A deck of 20 cards calling {@link getPrimaryPhotoUrlFor} per card is 20 round
- * trips and 20 presign operations — the N+1 that spec §4.7 exists to prevent.
- * Every list endpoint that returns user_compact must use this.
- *
- * Users with no approved primary photo are absent from the map, and callers
- * pass `?? null` so the key is still present in the response (spec §4.6).
- */
 export async function getPrimaryPhotoUrlsFor(userIds: string[]): Promise<Map<string, string>> {
   if (userIds.length === 0) {
     return new Map();

@@ -5,16 +5,6 @@ import { matchLikesHeldByPause } from '@modules/discovery/swipe.service';
 import { ApiError } from '@utils/api-error';
 import { logger } from '@utils/logger';
 
-/**
- * Settings (spec §7, Batch 5).
- *
- * Theme and accessibility are stored server-side deliberately, so they follow
- * the user to a new device rather than resetting on reinstall.
- *
- * Kept apart from Profile because none of it is ever shown to another user. A
- * setting cannot leak into a deck card by being added to the wrong model.
- */
-
 export interface SettingsView {
   theme: string;
   text_scale: number;
@@ -65,9 +55,6 @@ function toView(
     global_verified_only: row.global_verified_only,
     pause_new_matches: row.pause_new_matches,
     language: row.language,
-    // spec §5.6: snooze lives on the user, not here — the deck exclusion clause
-    // reads one boolean on every discovery query and must not join a settings
-    // table to do it. Surfaced here because it belongs on the settings screen.
     snooze: {
       is_snoozed: snooze.is_snoozed,
       ends_at: snooze.snooze_ends_at?.toISOString() ?? null,
@@ -76,7 +63,6 @@ function toView(
   };
 }
 
-/** Creates the row on first read rather than at signup, where it would mostly sit at defaults. */
 export async function getSettings(userId: string): Promise<SettingsView> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -121,15 +107,10 @@ export async function updateSettings(
     data: input as never,
   });
 
-  // Lists read the setting on every request, but a match with a chat already
-  // open only hears about it through the socket.
   if (input.show_last_active !== undefined && input.show_last_active !== before.show_last_active) {
     await broadcastActivityVisibility(userId, input.show_last_active);
   }
 
-  // A different verified-only rule is a different set of people in every
-  // mode, so today's decks are rebuilt from scratch on the next read — the
-  // same as changing one mode's filters does for that mode.
   if (
     input.global_verified_only !== undefined &&
     input.global_verified_only !== before.global_verified_only
@@ -146,15 +127,6 @@ export async function updateSettings(
   return getSettings(userId);
 }
 
-/**
- * Snooze (spec §5.6): hides the profile from all decks. Does not delete. The
- * account stays active and existing matches and conversations survive — which
- * is exactly why it is a flag rather than a status.
- *
- * `ends_at` is optional. Without it the snooze lasts until manually lifted;
- * with it, a scheduled job clears the flag when the time passes. Either way the
- * deck exclusion clause reads a single boolean.
- */
 export async function snooze(userId: string, endsAt: Date | null): Promise<SettingsView> {
   if (endsAt && endsAt.getTime() <= Date.now()) {
     throw ApiError.validation({ ends_at: ['Choose a time in the future.'] });
@@ -181,10 +153,6 @@ export async function unsnooze(userId: string): Promise<SettingsView> {
   return getSettings(userId);
 }
 
-/**
- * Clears snoozes whose timer has passed. Called by the scheduler from Batch 7;
- * exported now so the behaviour is testable before the job exists.
- */
 export async function expireSnoozes(now: Date = new Date()): Promise<number> {
   const result = await prisma.user.updateMany({
     where: { is_snoozed: true, snooze_ends_at: { not: null, lte: now } },

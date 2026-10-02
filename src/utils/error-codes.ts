@@ -1,9 +1,3 @@
-/**
- * Spec 4.4: the complete, stable error-code table.
- *
- * These codes are a public API contract — the Flutter app branches on them.
- * Renaming a shipped code is a breaking change. Add, never rename.
- */
 export const ERROR_CODES = {
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   BAD_REQUEST: 'BAD_REQUEST',
@@ -36,7 +30,6 @@ export const ERROR_CODES = {
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 
-/** Default HTTP status for each code, per the spec 4.4 table. */
 export const ERROR_STATUS: Record<ErrorCode, number> = {
   VALIDATION_FAILED: 400,
   BAD_REQUEST: 400,
@@ -67,10 +60,6 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   SERVICE_UNAVAILABLE: 503,
 };
 
-/**
- * Default user-displayable messages (spec 4.2: `message` is shown to the user).
- * Call sites may override with something more specific.
- */
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   VALIDATION_FAILED: 'Some fields need attention.',
   BAD_REQUEST: 'We could not process that request.',

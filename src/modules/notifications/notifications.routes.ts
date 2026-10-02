@@ -12,13 +12,6 @@ import {
   updatePreferenceSchema,
 } from './notifications.schema';
 
-/**
- * Notification routes (spec §7, Batch 11).
- *
- * Authenticated but not behind `requireOnboarded`: a pending user can receive
- * system and moderation notifications, and blocking the feed would hide the
- * message telling them why they are stuck.
- */
 export const notificationsRouter: Router = Router();
 
 notificationsRouter.use(authenticate);
@@ -29,7 +22,6 @@ notificationsRouter.get(
   asyncHandler(controller.listNotifications),
 );
 
-/** Literal paths first, so none of them is parsed as a notification id. */
 notificationsRouter.get('/unread-count', asyncHandler(controller.unreadCount));
 
 notificationsRouter.get('/badges', asyncHandler(controller.badges));

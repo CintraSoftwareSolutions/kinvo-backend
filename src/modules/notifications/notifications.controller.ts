@@ -11,7 +11,6 @@ import type {
   UpdatePreferenceBody,
 } from './notifications.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
 
 export async function listNotifications(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
@@ -51,7 +50,6 @@ export async function unreadCount(req: Request, res: Response): Promise<void> {
 
   const count = await notificationsService.unreadCount(user.id);
 
-  // spec §4.6: `data` is an object or array, never a bare scalar.
   sendSuccess(res, { unread_count: count });
 }
 

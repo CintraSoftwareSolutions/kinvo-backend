@@ -12,17 +12,6 @@ import { decodeCursor, paginate } from '@utils/cursor';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 
-/**
- * Plans (spec §5.8, Batch 12).
- *
- * Lifecycle: draft → proposed → confirmed | declined | cancelled → completed.
- *
- * THE RULE THAT SHAPES VISIBILITY: a draft is visible ONLY to its creator. The
- * other person sees nothing until it is proposed. Someone sketching out an idea
- * they might not send must not have it appear on the other person's screen —
- * that is the difference between a draft and a message.
- */
-
 const PLAN_INCLUDE = {
   venue: { select: { id: true, name: true, category: true, address: true, city: true } },
   match: {
@@ -45,7 +34,6 @@ export interface PlanView {
   id: string;
   match_id: string;
   mode: string;
-  /** The other person in the plan, so a list of plans can say who each is with. */
   user: UserCompact;
   status: PlanStatus;
   scheduled_at: string | null;
@@ -54,18 +42,12 @@ export interface PlanView {
   venue: { id: string; name: string; category: string; address: string | null } | null;
   custom_location: string | null;
   custom_address: string | null;
-  /** True when the caller created it — the app renders a different screen. */
   is_mine: boolean;
-  /**
-   * True when it is the caller's turn to respond. Never true once the plan's
-   * time has passed: that proposal can no longer be accepted.
-   */
   awaiting_my_response: boolean;
   shared_with_contacts: number;
   created_at: string;
 }
 
-/** What describing the other person in a set of plans needs, looked up once. */
 interface OtherPeople {
   photoUrls: Map<string, string>;
   online: Set<string>;
@@ -97,8 +79,6 @@ function toView(plan: PlanRow, viewerId: string, people: OtherPeople, now: Date)
     custom_address: plan.custom_address,
     is_mine: isMine,
     awaiting_my_response: plan.status === PlanStatus.proposed && !isMine && !timeHasPassed,
-    // Only the viewer's own contacts: how many people the other person told
-    // is theirs to know.
     shared_with_contacts: plan.shares.filter((share) => share.trusted_contact.user_id === viewerId)
       .length,
     created_at: plan.created_at.toISOString(),
@@ -126,23 +106,11 @@ async function presentOne(plan: PlanRow, viewerId: string): Promise<PlanView> {
   return view;
 }
 
-/**
- * Both people still have accounts in good standing. A plan with someone whose
- * account was deleted or suspended is hidden, as their match is: showing it
- * would tell them apart from someone who never existed (spec §5.5). The caller
- * passed `requireOnboarded`, so their side always holds.
- */
 const BOTH_ACCOUNTS_ACTIVE = {
   user_a: { deleted_at: null, status: UserStatus.active },
   user_b: { deleted_at: null, status: UserStatus.active },
 } satisfies Prisma.MatchWhereInput;
 
-/**
- * Loads a plan the caller can see.
- *
- * Drafts are filtered to the creator here rather than in each caller — putting
- * it in one place is what stops a future endpoint forgetting and leaking one.
- */
 async function loadVisible(viewerId: string, planId: string): Promise<PlanRow> {
   const plan = await prisma.plan.findFirst({
     where: {
@@ -161,13 +129,6 @@ async function loadVisible(viewerId: string, planId: string): Promise<PlanRow> {
   return plan;
 }
 
-/**
- * Confirms the pair may still plan together.
- *
- * spec §5.8: only participants in an ACTIVE, NON-BLOCKED match. Checked on
- * every mutation rather than only at creation, because a match can be blocked
- * or unmatched between drafting a plan and proposing it.
- */
 async function assertCanPlan(viewerId: string, matchId: string) {
   const match = await prisma.match.findFirst({
     where: {
@@ -204,7 +165,6 @@ export interface CreatePlanInput {
   scheduled_at?: string;
   duration_minutes?: number;
   notes?: string;
-  /** False keeps it a draft, visible only to the creator. */
   propose?: boolean;
 }
 
@@ -262,7 +222,6 @@ export async function createPlan(viewerId: string, input: CreatePlanInput): Prom
   return presentOne(plan, viewerId);
 }
 
-/** Refuses a venue that doesn't exist or is no longer listed. */
 async function assertVenueAvailable(venueId: string): Promise<void> {
   const venue = await prisma.venue.findFirst({
     where: { id: venueId, is_active: true },
@@ -274,7 +233,6 @@ async function assertVenueAvailable(venueId: string): Promise<void> {
   }
 }
 
-/** Where a plan is, in a word or two, for a notification. */
 function placeOf(plan: PlanRow): string {
   return plan.venue?.name ?? plan.custom_location ?? 'somewhere';
 }
@@ -292,15 +250,11 @@ async function notifyProposed(plan: PlanRow, recipientId: string): Promise<void>
 }
 
 export interface UpdatePlanInput {
-  /** `null` clears it, to switch to a typed location. */
   venue_id?: string | null;
-  /** `null` clears it, to switch to a venue. */
   custom_location?: string | null;
-  /** `null` or an empty string clears it. */
   custom_address?: string | null;
   scheduled_at?: string;
   duration_minutes?: number;
-  /** An empty string clears it. */
   notes?: string;
 }
 
@@ -312,8 +266,6 @@ export async function updatePlan(
   const existing = await loadVisible(viewerId, planId);
 
   if (existing.creator_id !== viewerId) {
-    // Editing someone else's proposal would let one side change the time after
-    // the other accepted it.
     throw ApiError.notFound();
   }
 
@@ -374,7 +326,6 @@ export async function updatePlan(
   return presentOne(updated, viewerId);
 }
 
-/** Moves a draft to proposed. The only way the other side learns it exists. */
 export async function proposePlan(viewerId: string, planId: string): Promise<PlanView> {
   const existing = await loadVisible(viewerId, planId);
 
@@ -408,12 +359,6 @@ export async function proposePlan(viewerId: string, planId: string): Promise<Pla
   return presentOne(updated, viewerId);
 }
 
-/**
- * Accept or decline. Only the person who did NOT propose it may respond.
- *
- * Otherwise someone could accept their own plan and produce a confirmed
- * meeting the other person never agreed to.
- */
 export async function respondToPlan(
   viewerId: string,
   planId: string,
@@ -462,10 +407,6 @@ export async function respondToPlan(
   return presentOne(updated, viewerId);
 }
 
-/**
- * Either participant may cancel a plan that was sent, at any point before it
- * is finished. A draft is deleted instead (see `deleteDraft`).
- */
 export async function cancelPlan(
   viewerId: string,
   planId: string,
@@ -474,9 +415,6 @@ export async function cancelPlan(
   const existing = await loadVisible(viewerId, planId);
 
   if (existing.status === PlanStatus.draft) {
-    // A cancelled plan is visible to both people, so cancelling a draft would
-    // show the other person a plan that was never sent, notes and address
-    // included.
     throw ApiError.badRequest('That plan was never sent. Delete the draft instead.', {
       status: existing.status,
     });
@@ -514,10 +452,6 @@ export async function cancelPlan(
   return presentOne(updated, viewerId);
 }
 
-/**
- * Throws a draft away. Only its creator can see a draft, so only they can
- * delete it, and nobody is told: the other person never knew it existed.
- */
 export async function deleteDraft(viewerId: string, planId: string): Promise<void> {
   const existing = await loadVisible(viewerId, planId);
 
@@ -542,12 +476,6 @@ export async function deleteDraft(viewerId: string, planId: string): Promise<voi
 
 export type PlanTab = 'upcoming' | 'pending' | 'history';
 
-/**
- * The three tabs from spec §5.8, plus drafts.
- *
- * Drafts are deliberately their own filter rather than living in "pending":
- * pending means waiting on the other person, and a draft is waiting on you.
- */
 export async function listPlans(
   viewerId: string,
   options: { limit: number; cursor?: string; tab?: PlanTab; drafts?: boolean },
@@ -615,25 +543,10 @@ export async function getPlan(viewerId: string, planId: string): Promise<PlanVie
 }
 
 export interface ShareResult {
-  /** How many of the caller's contacts now know about the plan, earlier ones included. */
   shared: number;
-  /** What happened for each contact asked for. */
   contacts: ContactAlert[];
 }
 
-/**
- * Shares a plan with the caller's trusted contacts, by email (spec §5.7).
- *
- * Only a CONFIRMED plan can be shared. Telling someone's sister about a plan
- * that was never accepted is noise, and it leaks the other person's
- * availability before they agreed to anything.
- *
- * A contact counts as told only once an email to them was sent, so
- * `shared_with_contacts` counts people who know, and a contact with no email
- * address can be tried again once they have one. Someone already told about
- * this plan isn't emailed again: sharing twice must not become a way to fill
- * someone's inbox.
- */
 export async function sharePlan(
   viewerId: string,
   planId: string,
@@ -721,13 +634,6 @@ export async function sharePlan(
   };
 }
 
-/**
- * Marks plans that have passed as completed.
- *
- * Bookkeeping, like the match sweep: the History tab already treats a confirmed
- * plan in the past as history, so this job being late changes nothing a user
- * sees.
- */
 export async function sweepCompletedPlans(now: Date = new Date()): Promise<number> {
   const result = await prisma.plan.updateMany({
     where: {

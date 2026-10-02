@@ -4,22 +4,9 @@ import {
   UNLIMITED,
 } from '@modules/entitlements/entitlements.types';
 
-/**
- * The paywall's bullet points: what a plan adds over the free tier, in words.
- *
- * Written from the entitlement matrix rather than typed into the app, because
- * which features are paid for is DATA (spec §5.11) — several rows are still
- * provisional — and a plan description that drifted from what the plan unlocks
- * is a support problem and a store-review problem at once. Moving a feature
- * between tiers is a seed edit, and this list follows it with no release.
- *
- * Only what paying ADDS is listed: a line appears when the plan's value beats
- * the free tier's. A feature everybody has is not a reason to buy anything.
- */
 
 type Line = (plan: EntitlementMap, free: EntitlementMap) => string | null;
 
-/** A numeric limit, when the plan's beats the free tier's. */
 function limit(key: EntitlementKey, unlimited: string, counted: (value: number) => string): Line {
   return (plan, free) => {
     const mine = plan[key] as number;
@@ -31,19 +18,10 @@ function limit(key: EntitlementKey, unlimited: string, counted: (value: number) 
   };
 }
 
-/** A feature the plan has and the free tier does not. */
 function feature(key: EntitlementKey, text: string): Line {
   return (plan, free) => (plan[key] === true && free[key] !== true ? text : null);
 }
 
-/**
- * Every flag, in the order a person weighs a plan: limits first, then what can
- * be seen, then extras.
- *
- * A Record over EntitlementKey, so a flag added to the vocabulary without a
- * decision here is a compile error rather than a feature nobody is told about.
- * `null` is that decision made: never listed.
- */
 const LINES: Record<EntitlementKey, Line | null> = {
   daily_swipe_limit: limit('daily_swipe_limit', 'Unlimited likes', (n) => `${n} likes a day`),
   daily_message_limit: limit(
@@ -68,7 +46,6 @@ const LINES: Record<EntitlementKey, Line | null> = {
   basic_filters: null,
 };
 
-/** What [plan] adds over [free], as the paywall shows it. */
 export function describePlan(plan: EntitlementMap, free: EntitlementMap): string[] {
   const lines: string[] = [];
 

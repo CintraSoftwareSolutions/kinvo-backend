@@ -7,15 +7,6 @@ import { prisma } from '@/db/prisma';
 import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 
-/**
- * Password hashing and reset codes (spec §2, §7 Batch 2).
- */
-
-/**
- * argon2id — the hybrid mode, resistant to both GPU and side-channel attacks.
- * These are the library defaults, stated explicitly so a future change is a
- * visible decision rather than a silent dependency upgrade.
- */
 const PRODUCTION_OPTIONS = {
   type: argon2.argon2id,
   memoryCost: 65536, // 64 MiB
@@ -23,19 +14,6 @@ const PRODUCTION_OPTIONS = {
   parallelism: 4,
 } as const;
 
-/**
- * Deliberately weak parameters, USED ONLY UNDER TEST.
- *
- * A production hash costs ~540ms by design; that cost IS the security property.
- * The suite hashes a password for nearly every fixture, which put roughly a
- * third of a fifteen-minute run inside argon2 — time that proves nothing, since
- * no test asserts how slow hashing is.
- *
- * These are the lowest values argon2 accepts. They are catastrophic for real
- * passwords, which is why the switch reads `isTest` and nothing else: there is
- * no environment variable to set wrong, and no way to reach them from a
- * deployed environment.
- */
 const TEST_OPTIONS = {
   type: argon2.argon2id,
   memoryCost: 8192, // 8 MiB, the argon2 minimum for this parallelism
@@ -49,11 +27,7 @@ export async function hashPassword(plain: string): Promise<string> {
   return argon2.hash(plain, ARGON2_OPTIONS);
 }
 
-/**
- * Returns false rather than throwing on a malformed stored hash: a corrupt row
- * must read as "wrong password", never as a 500 that tells the caller the
- * account exists.
- */
+
 export async function verifyPassword(hash: string, plain: string): Promise<boolean> {
   try {
     return await argon2.verify(hash, plain);
@@ -62,17 +36,11 @@ export async function verifyPassword(hash: string, plain: string): Promise<boole
   }
 }
 
-/**
- * Runs a hash against a throwaway value so a login attempt for an unknown email
- * costs the same time as one for a real account. Without this, response timing
- * reveals which addresses are registered.
- */
 export async function simulatePasswordVerification(): Promise<void> {
   await argon2.hash('timing-equalisation-placeholder', ARGON2_OPTIONS);
 }
 
 export interface ResetCodeIssue {
-  /** Emailed to the user. Never stored, never logged. */
   code: string;
   expires_at: Date;
 }
@@ -98,17 +66,6 @@ export async function createPasswordResetCode(userId: string): Promise<ResetCode
   return { code, expires_at: expiresAt };
 }
 
-/**
- * Validates and consumes a reset code.
- *
- * The code is looked up against ONE account — the one the email in the request
- * resolved to — never by hash across the table. Six digits collide across
- * users constantly, and a global lookup would let a caller who knows no email
- * address at all walk into whichever account happened to share their guess.
- *
- * Consumption is a conditional update rather than a read-then-write, so two
- * simultaneous requests cannot both succeed with the same code.
- */
 export async function consumePasswordResetCode(userId: string, code: string): Promise<void> {
   const outstanding = await prisma.passwordResetToken.findFirst({
     where: {
@@ -156,13 +113,6 @@ export async function consumePasswordResetCode(userId: string, code: string): Pr
     throw invalidResetCode();
   }
 }
-
-/**
- * One message for every way a code can fail — wrong, expired, already used, out
- * of attempts, or never issued. Telling them apart tells a caller which
- * accounts have a reset in flight, and tells an attacker grinding codes whether
- * they are getting closer.
- */
 export function invalidResetCode(): ApiError {
   return new ApiError(
     ERROR_CODES.AUTH_TOKEN_INVALID,

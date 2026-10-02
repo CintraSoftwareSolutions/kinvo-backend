@@ -11,17 +11,6 @@ import { generateSecureToken, sha256 } from '@utils/hash';
 import { logger } from '@utils/logger';
 import type { AccessTokenPayload, AuthTokens, RefreshTokenPayload } from './auth.types';
 
-/**
- * Token issuance and rotation (spec §4.3).
- *
- * Access tokens are stateless and short-lived (30 minutes). Refresh tokens are
- * stateful, long-lived (60 days), rotated on every use, and grouped into
- * families so a replayed token can invalidate an entire compromised chain.
- *
- * The stored value is a SHA-256 hash, never the token itself: a leaked database
- * must not yield working refresh tokens.
- */
-
 const ACCESS_TTL_SECONDS = TOKEN_LIFETIMES.ACCESS_SECONDS;
 const REFRESH_TTL_SECONDS = TOKEN_LIFETIMES.REFRESH_SECONDS;
 
@@ -48,12 +37,6 @@ function signRefreshToken(userId: string, tokenId: string, familyId: string): st
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, signOptions(REFRESH_TTL_SECONDS));
 }
 
-/**
- * Distinguishes expiry from invalidity, because the app does different things:
- * AUTH_TOKEN_EXPIRED means refresh silently and retry; AUTH_TOKEN_INVALID means
- * log out. Collapsing them into a generic 401 forces the client to guess, and
- * the usual guess is wrong for the first case (spec §4.3).
- */
 function verify<T>(token: string, secret: string): T {
   try {
     return jwt.verify(token, secret, { issuer: env.JWT_ISSUER }) as T;
@@ -91,10 +74,6 @@ function expiryDate(seconds: number): Date {
   return new Date(Date.now() + seconds * 1000);
 }
 
-/**
- * Starts a new token family. Called on every fresh sign-in, so each device gets
- * an independent chain and revoking one does not sign the user out everywhere.
- */
 export async function issueTokenPair(
   userId: string,
   options: { deviceId?: string | null } = {},
@@ -130,7 +109,6 @@ async function createTokenInFamily(
   };
 }
 
-/** Revokes every live token in a family. Used on replay and on sign-out. */
 export async function revokeFamily(familyId: string): Promise<void> {
   await prisma.refreshToken.updateMany({
     where: { family_id: familyId, revoked_at: null },
@@ -145,22 +123,12 @@ export async function revokeAllTokensForUser(userId: string): Promise<void> {
   });
 }
 
-/** A session's tokens, with who and which device they belong to. */
 export interface SessionTokens {
   tokens: AuthTokens;
   userId: string;
-  /** Null for a session started before the app sent its device id. */
   deviceId: string | null;
 }
 
-/**
- * Exchanges a refresh token for a new pair.
- *
- * spec §4.3: rotate on every use and invalidate the old one. If a token that
- * has already been rotated comes back, treat it as theft and revoke the whole
- * family — the legitimate user and the attacker both hold tokens from that
- * chain, and there is no way to tell which is which, so neither may continue.
- */
 export async function rotateRefreshToken(rawToken: string): Promise<SessionTokens> {
   const payload = verifyRefreshToken(rawToken);
   const stored = await prisma.refreshToken.findUnique({
@@ -200,13 +168,6 @@ export async function rotateRefreshToken(rawToken: string): Promise<SessionToken
   return { tokens, userId: stored.user_id, deviceId: stored.device_id };
 }
 
-/**
- * Sign-out. Revokes the presented token's whole family, so that device is
- * logged out while other devices keep working.
- *
- * Never reveals whether the token was valid: sign-out succeeds regardless, and
- * a caller learning "that token was real" from an error would be a small oracle.
- */
 export async function revokeRefreshToken(
   rawToken: string,
 ): Promise<{ userId: string; deviceId: string | null } | null> {
@@ -224,7 +185,6 @@ export async function revokeRefreshToken(
   return { userId: stored.user_id, deviceId: stored.device_id };
 }
 
-/** Housekeeping for the Batch 7 scheduler; harmless to call at any time. */
 export async function pruneExpiredTokens(): Promise<number> {
   const result = await prisma.refreshToken.deleteMany({
     where: { expires_at: { lt: new Date() } },

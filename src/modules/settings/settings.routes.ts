@@ -6,7 +6,6 @@ import { asyncHandler } from '@utils/async-handler';
 import * as controller from './settings.controller';
 import { deviceIdParamSchema, snoozeSchema, updateSettingsSchema } from './settings.schema';
 
-/** Settings and connected devices (spec §7, Batch 5). */
 export const settingsRouter: Router = Router();
 
 settingsRouter.use(authenticate);
@@ -29,7 +28,6 @@ devicesRouter.use(authenticate);
 
 devicesRouter.get('/', asyncHandler(controller.listDevices));
 
-// Before /:id, or "others" is read as a device id.
 devicesRouter.delete('/others', asyncHandler(controller.revokeOtherDevices));
 
 devicesRouter.delete(

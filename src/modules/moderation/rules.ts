@@ -5,26 +5,6 @@ import {
   type ModerationFinding,
 } from '@/providers/moderation.provider';
 
-/**
- * The rule set behind rules-based moderation v1 (decision #8, spec §5.4).
- *
- * Two design constraints shape every rule here:
- *
- *  1. **The result is ADVISORY.** A false positive costs the user one dialog
- *     they can dismiss; a false negative lets a scam through. That asymmetry
- *     justifies leaning slightly toward catching things — but only slightly,
- *     because a warning users learn to dismiss reflexively protects nobody.
- *
- *  2. **Scam and payment language is checked on EVERY mode** (spec §1). Trading
- *     is an interest category with no trading functionality, which makes it the
- *     most likely home for investment fraud. A check scoped to dating would
- *     miss exactly the conversations that need it.
- *
- * Patterns are deliberately phrase-based rather than keyword-based. "cash" is a
- * normal word; "cash app" and "send cash" are not. Matching bare keywords is
- * how a moderation system becomes noise.
- */
-
 interface Rule {
   category: ModerationCategory;
   severity: ModerationSeverity;
@@ -32,16 +12,6 @@ interface Rule {
   message: string;
 }
 
-/**
- * Lowercases and repairs punctuation, then rejoins letters split by punctuation
- * only: "w-a-l-l-e-t" becomes "wallet".
- *
- * SPACES ARE LEFT ALONE HERE, deliberately. Collapsing them too would merge
- * "w-a-l-l-e-t a-d-d-r-e-s-s" into one word and stop it matching the phrase it
- * obviously is. Space-based evasion is handled by {@link compact} instead,
- * because once the spaces are gone there is no way to know where the word
- * breaks were.
- */
 export function normalise(content: string): string {
   return (
     content
@@ -56,15 +26,6 @@ export function normalise(content: string): string {
   );
 }
 
-/**
- * Everything except letters and digits removed.
- *
- * This is what catches "s e e d p h r a s e" and "s.e.e.d p-h-r-a-s-e". Only
- * the COMPACT_RULES below run against it: a phrase pattern containing a space
- * can never match a string with no spaces, so running the full rule set here
- * would be wasted work that also invites false positives across word
- * boundaries — "the rapist" compacts to something no rule should match on.
- */
 export function compact(content: string): string {
   return content.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -168,13 +129,6 @@ const RULES: Rule[] = [
   },
 ];
 
-/**
- * Space- and punctuation-proof forms of the terms worth the most.
- *
- * Kept to a short list on purpose. Matching compacted text is powerful and
- * indiscriminate: every entry here has to be a string that essentially cannot
- * occur inside ordinary prose once the spaces are stripped.
- */
 const COMPACT_RULES: Rule[] = [
   {
     category: MODERATION_CATEGORIES.SCAM_PAYMENT,
@@ -191,13 +145,6 @@ const COMPACT_RULES: Rule[] = [
   },
 ];
 
-/**
- * Runs every rule and returns one finding per category.
- *
- * De-duplicated by category on purpose: three payment phrases in one message is
- * still one problem, and a dialog listing the same warning three times reads as
- * broken rather than thorough.
- */
 export function evaluate(content: string): ModerationFinding[] {
   const normalised = normalise(content);
   const compacted = compact(content);
@@ -238,5 +185,4 @@ const SEVERITY_RANK: Record<ModerationSeverity, number> = {
   critical: 4,
 };
 
-/** Exposed for the rule-count assertion in tests. */
 export const RULE_COUNT = RULES.length + COMPACT_RULES.length;

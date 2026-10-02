@@ -2,19 +2,12 @@ import { z } from 'zod';
 
 import { Mode } from '@/db/prisma';
 
-/** Validation for the mode endpoints (spec §0.5). */
-
 export const modeParamSchema = z.object({
   mode: z.nativeEnum(Mode, {
     errorMap: () => ({ message: 'That is not one of the eight modes.' }),
   }),
 });
 
-/**
- * Common preferences are columns; `preferences` holds the mode-specific extras
- * and is validated against that mode's own schema in the service, where the
- * mode is known.
- */
 export const updateModeSchema = z
   .object({
     is_enabled: z.boolean().optional(),

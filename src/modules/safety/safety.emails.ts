@@ -1,17 +1,7 @@
 import type { EmailMessage } from '@/providers/email.provider';
 import type { Coordinates } from '@/db/geo';
 
-/**
- * Emails to a user's trusted contacts, and to the safety team (spec §5.7).
- *
- * Everything a user typed — their name, a contact's name, a place, a note — is
- * escaped before it goes into HTML, so nobody can put markup, or a link that
- * isn't what it says, into an email that arrives with Kinvo's name on it.
- */
-
-/** A plan, as a trusted contact is told about it. */
 export interface PlanForContact {
-  /** The other person's name, as they show it on Kinvo. */
   withName: string;
   place: string;
   address: string | null;
@@ -19,11 +9,6 @@ export interface PlanForContact {
   durationMinutes: number | null;
 }
 
-/**
- * A time as the reader should see it: in the sender's own time, which the app
- * gives as its offset from UTC, since the server knows nobody's time zone.
- * "Saturday 20 September at 19:00 (UTC+01:00)". UTC when no offset was given.
- */
 export function formatForReader(at: Date, utcOffsetMinutes?: number): string {
   const offset = utcOffsetMinutes ?? 0;
   const shifted = new Date(at.getTime() + offset * 60_000);
@@ -52,7 +37,6 @@ function offsetLabel(minutes: number): string {
   return `UTC${sign}${hours}:${rest}`;
 }
 
-/** A map pin, which opens in whatever maps app the reader has. */
 export function mapsLink(coordinates: Coordinates): string {
   return `https://www.google.com/maps/search/?api=1&query=${coordinates.latitude},${coordinates.longitude}`;
 }
@@ -78,15 +62,10 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** A subject line can't be allowed to carry a line break into the headers. */
 function oneLine(value: string): string {
   return value.replace(/[\r\n]+/g, ' ').trim();
 }
 
-/**
- * Plain paragraphs to both bodies. A paragraph may hold one link, [href],
- * shown as its own text: the reader sees exactly where it goes.
- */
 function compose(
   to: string,
   subject: string,
@@ -220,10 +199,6 @@ export function callUpdateEmail(input: {
   ]);
 }
 
-/**
- * The safety team's copy of an emergency. Identifiers rather than contact
- * details: whoever reads it looks the rest up in the admin tools.
- */
 export function safetyTeamEmail(input: {
   to: string;
   eventId: string;

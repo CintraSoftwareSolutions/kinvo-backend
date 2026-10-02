@@ -3,12 +3,6 @@ import type { Response } from 'express';
 import type { ApiError, ErrorDetails } from '@utils/api-error';
 import type { ErrorCode } from '@utils/error-codes';
 
-/**
- * Spec 4.2 — the response envelope. Every response in this service, success or
- * failure, empty list or single object, goes through this module. The Flutter
- * app writes its networking layer once; a deviating endpoint is a bug.
- */
-
 export interface PaginationMeta {
   next_cursor: string | null;
   has_more: boolean;
@@ -34,10 +28,6 @@ export interface ErrorEnvelope {
   };
 }
 
-/**
- * Spec 4.6: `data` is always an object or array, never a bare scalar.
- * Wrap scalars at the call site: `{ count: 4 }`.
- */
 export type Payload = Record<string, unknown> | unknown[];
 
 export function buildSuccess<TData extends Payload>(
@@ -63,7 +53,6 @@ export function sendSuccess<TData extends Payload>(
   return res.status(statusCode).json(buildSuccess(data));
 }
 
-/** Spec 4.5: cursor pagination for decks, matches, messages, notifications. */
 export function sendList<TItem>(
   res: Response,
   data: TItem[],

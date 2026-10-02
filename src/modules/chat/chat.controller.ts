@@ -10,8 +10,6 @@ import type {
   UpdateConversationBody,
 } from './chat.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function listConversations(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const { limit, cursor, archived, mode } = req.query as unknown as ListQuery;

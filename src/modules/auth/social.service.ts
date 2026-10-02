@@ -3,27 +3,11 @@ import { verifyAppleIdToken } from '@/providers/apple-auth.provider';
 import { type SocialIdentity, verifyGoogleIdToken } from '@/providers/google-auth.provider';
 import { logger } from '@utils/logger';
 
-/**
- * Google and Apple sign-in (spec §5.1, §7 Batch 2).
- *
- * The rule that matters: signing up with email and later using Google on the
- * same address LINKS to the existing user. It never creates a second account.
- * One user, many AuthIdentity rows.
- */
-
 export interface SocialSignInResult {
   user_id: string;
-  /** True when this call created the account, so the caller can log it. */
   is_new_user: boolean;
 }
 
-/**
- * A verified email is the only safe basis for linking.
- *
- * If an unverified address could link, anyone could create a provider account
- * claiming victim@example.com and be handed the victim's Kinvo account. Google
- * and Apple both report verification status; we require it.
- */
 function canLinkByEmail(identity: SocialIdentity): identity is SocialIdentity & { email: string } {
   return Boolean(identity.email) && identity.email_verified;
 }
@@ -80,12 +64,7 @@ async function resolveIdentity(
     }
   }
 
-  // 3. Genuinely new.
-  //
-  // No date of birth: neither Google nor Apple supplies one. The account is
-  // created `pending`, which blocks discovery, matching, and chat with
-  // ONBOARDING_INCOMPLETE until Batch 3's onboarding collects a date of birth
-  // and applies the under-18 rejection (spec §5.1).
+
   const user = await prisma.user.create({
     data: {
       display_name: fallbackDisplayName(identity, requestedDisplayName),

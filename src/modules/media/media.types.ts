@@ -1,9 +1,5 @@
 import type { BucketName } from '@/providers/s3.provider';
 
-/**
- * What an upload is for. Drives the bucket, the size and type limits, and what
- * the finished asset may be attached to.
- */
 export type UploadPurpose =
   | 'profile_photo'
   | 'chat_image'
@@ -14,10 +10,8 @@ export type UploadPurpose =
 
 export interface UploadPolicy {
   bucket: BucketName;
-  /** Exhaustive allow-list. Anything not named here is refused. */
   mime_types: readonly string[];
   max_bytes: number;
-  /** Voice notes must declare a duration (spec §5.4). */
   requires_duration: boolean;
   max_duration_ms?: number;
 }
@@ -62,6 +56,5 @@ export interface VerificationView {
   submitted_at: string | null;
   reviewed_at: string | null;
   rejection_reason: string | null;
-  /** Derived from the latest approved record (spec §7, Batch 4). */
   is_verified: boolean;
 }

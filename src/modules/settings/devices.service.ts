@@ -3,15 +3,6 @@ import { disconnectDevice } from '@/realtime/emit';
 import { ApiError } from '@utils/api-error';
 import { logger } from '@utils/logger';
 
-/**
- * Connected devices (spec §7, Batch 5).
- *
- * Revoking a device is a security action, so it must actually end the session
- * rather than only removing a row from a list. Each revoke kills the refresh
- * token family bound to that device — otherwise a stolen phone keeps working
- * and the settings screen tells the user a comforting lie.
- */
-
 export interface DeviceView {
   id: string;
   device_id: string;
@@ -45,14 +36,12 @@ export async function listDevices(userId: string, currentDeviceId?: string): Pro
   }));
 }
 
-/** What the app says about the device behind a request (spec §4.11). */
 export interface DeviceDetails {
   userId: string;
   deviceId: string;
   platform: string;
   appVersion?: string;
   osVersion?: string;
-  /** For example "Pixel 8", so the list can tell two phones apart. */
   model?: string;
 }
 
@@ -60,7 +49,6 @@ function platformOf(value: string): string {
   return ['ios', 'android', 'web'].includes(value) ? value : 'web';
 }
 
-/** Records the device a sign-in comes from, or brings back one signed out before. */
 export async function registerDevice(options: DeviceDetails): Promise<void> {
   await prisma.device.upsert({
     where: { user_id_device_id: { user_id: options.userId, device_id: options.deviceId } },
@@ -83,13 +71,6 @@ export async function registerDevice(options: DeviceDetails): Promise<void> {
   });
 }
 
-/**
- * A session carrying on (a token refresh): keeps the device's last-seen time
- * and versions current.
- *
- * Never brings back a device that was signed out. A refresh that races a
- * sign-out from another phone must not undo it; only a new sign-in may.
- */
 export async function touchDevice(options: DeviceDetails): Promise<void> {
   const touched = await prisma.device.updateMany({
     where: { user_id: options.userId, device_id: options.deviceId, revoked_at: null },
@@ -122,15 +103,6 @@ export async function touchDevice(options: DeviceDetails): Promise<void> {
   });
 }
 
-/**
- * Whether the device behind a session was signed out: from the device list,
- * by "sign out everywhere else", or by logging out on it.
- *
- * Checked on every request and socket handshake, because an access token
- * would otherwise keep a signed-out phone working for up to 30 minutes. A
- * device that was never recorded counts as signed in: nothing could have
- * signed it out.
- */
 export async function isDeviceSignedOut(userId: string, deviceId: string): Promise<boolean> {
   const device = await prisma.device.findUnique({
     where: { user_id_device_id: { user_id: userId, device_id: deviceId } },
@@ -139,12 +111,6 @@ export async function isDeviceSignedOut(userId: string, deviceId: string): Promi
 
   return Boolean(device?.revoked_at);
 }
-
-/**
- * Every device at once, for a password reset or change, which already revoke
- * every refresh token. Without this the device list kept showing them all as
- * signed in, and their access tokens kept working for up to 30 minutes.
- */
 export async function signOutAllDevices(userId: string): Promise<void> {
   const devices = await prisma.device.findMany({
     where: { user_id: userId, revoked_at: null },
@@ -161,10 +127,6 @@ export async function signOutAllDevices(userId: string): Promise<void> {
   }
 }
 
-/**
- * Logging out on a device: it leaves the device list and stops getting
- * notifications. The caller revokes its session tokens.
- */
 export async function signOutDevice(userId: string, deviceId: string): Promise<void> {
   await prisma.device.updateMany({
     where: { user_id: userId, device_id: deviceId, revoked_at: null },
@@ -174,12 +136,6 @@ export async function signOutDevice(userId: string, deviceId: string): Promise<v
   disconnectDevice(userId, deviceId);
 }
 
-/**
- * Revokes one device and ends its session.
- *
- * The token family is matched on device_id, which is what makes this a real
- * sign-out rather than a cosmetic list change.
- */
 export async function revokeDevice(userId: string, deviceRowId: string): Promise<void> {
   const device = await prisma.device.findFirst({
     where: { id: deviceRowId, user_id: userId, revoked_at: null },
@@ -210,11 +166,6 @@ export async function revokeDevice(userId: string, deviceRowId: string): Promise
   logger.info({ user_id: userId, device_id: device.device_id }, 'device revoked');
 }
 
-/**
- * "Sign out everywhere else" — the button a user reaches for after losing a
- * phone. Keeps the current device so they are not locked out of the screen
- * they just used.
- */
 export async function revokeOtherDevices(
   userId: string,
   currentDeviceId?: string,

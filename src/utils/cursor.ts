@@ -1,23 +1,8 @@
 import { PAGINATION } from '@config/constants';
 import { ApiError } from '@utils/api-error';
 
-/**
- * Opaque cursors (spec §4.5).
- *
- * Cursor pagination, not offset: a new match arriving mid-scroll shifts every
- * offset page and the user sees duplicates. A cursor names a position in the
- * ordering, so inserts elsewhere cannot disturb it.
- *
- * The encoding is base64 of JSON and is deliberately NOT a contract. The client
- * echoes back whatever it was handed and never parses it, which is what lets
- * the ordering key change later without a client release. Anything that reads a
- * cursor's contents outside this module has turned it into an API surface.
- */
-
 export interface CursorPayload {
-  /** The ordering key of the last item on the previous page. */
   k: string | number;
-  /** Tie-breaker id, so rows sharing an ordering key still paginate exactly once. */
   id: string;
 }
 
@@ -25,10 +10,6 @@ export function encodeCursor(payload: CursorPayload): string {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
 
-/**
- * A cursor the client mangled is a client bug, not a server error, so it is a
- * 400 with a field message rather than a 500.
- */
 export function decodeCursor(cursor: string): CursorPayload {
   let parsed: unknown;
 
@@ -51,12 +32,6 @@ export function decodeCursor(cursor: string): CursorPayload {
   return parsed as CursorPayload;
 }
 
-/**
- * Slices one page from a list fetched with `limit + 1` rows.
- *
- * Fetching one extra row is how `has_more` is known without a second COUNT
- * query — a count over a large filtered set costs more than the page itself.
- */
 export function paginate<TItem>(
   rows: TItem[],
   limit: number,

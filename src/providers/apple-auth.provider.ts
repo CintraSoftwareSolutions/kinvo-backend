@@ -8,27 +8,9 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 import type { SocialIdentity } from '@/providers/google-auth.provider';
 
-/**
- * Sign in with Apple (spec §7, Batch 2).
- *
- * Apple publishes no Node SDK. The obvious JWKS libraries (`jose`, and
- * `jwks-rsa` which depends on it) ship ESM-only builds that the CommonJS test
- * runner cannot load, so this fetches Apple's key set directly instead.
- *
- * That turns out to be the better answer regardless: Apple's JWKS is a small,
- * stable JSON document, Node imports a JWK natively via `createPublicKey`, and
- * `jsonwebtoken` is already in the locked stack (§2). No new dependency, and
- * the caching behaviour is ours to control.
- *
- * Apple sends the user's name only on the very first authorisation and never
- * again — the app must capture it then and pass it through, which is why
- * display_name comes from the request rather than from the token.
- */
-
 const APPLE_ISSUER = 'https://appleid.apple.com';
 const APPLE_JWKS_URL = `${APPLE_ISSUER}/auth/keys`;
 
-/** Apple rotates keys rarely; ten minutes keeps us current without hammering them. */
 const KEY_CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface AppleJwk {
@@ -46,7 +28,6 @@ interface KeyCache {
 
 let cache: KeyCache | null = null;
 
-/** Exported for tests; never call from application code. */
 export function __clearAppleKeyCache(): void {
   cache = null;
 }
@@ -88,8 +69,6 @@ async function getSigningKey(kid: string): Promise<KeyObject> {
     }
   }
 
-  // Either the cache is stale, or Apple has rotated in a key we have not seen.
-  // One refetch covers both; an unknown kid after that is a bad token.
   const keys = await fetchAppleKeys();
   const key = keys.get(kid);
 
@@ -107,7 +86,6 @@ interface AppleIdTokenClaims {
   is_private_email?: boolean | string;
 }
 
-/** Apple sends these booleans as the strings "true"/"false" in some versions. */
 function asBoolean(value: boolean | string | undefined): boolean {
   return value === true || value === 'true';
 }
@@ -133,8 +111,6 @@ export async function verifyAppleIdToken(idToken: string): Promise<SocialIdentit
 
     claims = jwt.verify(idToken, key, {
       issuer: APPLE_ISSUER,
-      // Rejects a token minted for a different app — the difference between
-      // "Apple signed this" and "Apple signed this for us".
       audience: env.APPLE_CLIENT_IDS as [string, ...string[]],
       algorithms: ['RS256'],
     }) as AppleIdTokenClaims;

@@ -7,13 +7,6 @@ import { asyncHandler } from '@utils/async-handler';
 import * as controller from './venues.controller';
 import { matchIdParamSchema, searchVenuesQuerySchema, venueIdParamSchema } from './venues.schema';
 
-/**
- * Venue routes (spec §7, §5.9, Batch 12).
- *
- * Read-only for users. Venues are admin-curated because the list is where the
- * product suggests two strangers meet; creating and editing them belongs to the
- * admin module in Batch 15.
- */
 export const venuesRouter: Router = Router();
 
 venuesRouter.use(authenticate, requireOnboarded);
@@ -24,7 +17,6 @@ venuesRouter.get(
   asyncHandler(controller.searchVenues),
 );
 
-/** Literal paths first, so neither is parsed as a venue id. */
 venuesRouter.get('/saved', asyncHandler(controller.listSaved));
 
 venuesRouter.get(

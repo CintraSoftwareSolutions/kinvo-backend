@@ -3,8 +3,6 @@ import { z } from 'zod';
 import { PAGINATION } from '@config/constants';
 import { utcOffsetMinutes } from '@modules/safety/safety.schema';
 
-/** Plan request validation (spec §4.10, §5.8, Batch 12). */
-
 export const listPlansQuerySchema = z
   .object({
     limit: z.coerce
@@ -15,7 +13,6 @@ export const listPlansQuerySchema = z
       .optional()
       .default(PAGINATION.DEFAULT_LIMIT),
     cursor: z.string().min(1).max(512).optional(),
-    /** spec §5.8: the three tabs. Drafts are separate — they wait on YOU. */
     tab: z.enum(['upcoming', 'pending', 'history']).optional(),
     drafts: z
       .enum(['true', 'false'])
@@ -35,7 +32,6 @@ export const createPlanSchema = z
     scheduled_at: z.string().datetime({ message: 'Expected an ISO-8601 timestamp.' }).optional(),
     duration_minutes: z.number().int().min(15).max(1440).optional(),
     notes: z.string().trim().max(1000).optional(),
-    /** False, or absent, keeps it a draft the other person cannot see. */
     propose: z.boolean().optional(),
   })
   .strict();
@@ -43,11 +39,8 @@ export const createPlanSchema = z
 export const updatePlanSchema = createPlanSchema
   .omit({ match_id: true, propose: true })
   .extend({
-    /** `null` clears it, to switch to a typed location. */
     venue_id: z.string().uuid().nullable(),
-    /** `null` clears it, to switch to a venue. */
     custom_location: z.string().trim().min(1).max(200).nullable(),
-    /** `null` or an empty string clears it. */
     custom_address: z.string().trim().max(300).nullable(),
   })
   .partial()

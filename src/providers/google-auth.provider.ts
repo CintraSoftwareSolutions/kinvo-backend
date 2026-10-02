@@ -5,27 +5,14 @@ import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 
-/**
- * Google Sign-In (spec §7, Batch 2).
- *
- * The app completes the Google flow and sends us the resulting ID token. We
- * verify it against Google's published keys before trusting a single field —
- * an unverified ID token is just a string the caller chose, and accepting one
- * would let anyone sign in as anyone.
- */
 
 export interface SocialIdentity {
-  /** The provider's stable subject identifier. Never the email. */
   subject: string;
   email: string | null;
   email_verified: boolean;
   name: string | null;
 }
 
-/**
- * iOS, Android, and web each have their own client ID, and all are legitimate
- * audiences for the same backend.
- */
 const client = new OAuth2Client();
 
 export async function verifyGoogleIdToken(idToken: string): Promise<SocialIdentity> {

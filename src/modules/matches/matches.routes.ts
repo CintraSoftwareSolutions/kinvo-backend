@@ -7,15 +7,6 @@ import { asyncHandler } from '@utils/async-handler';
 import * as controller from './matches.controller';
 import { listMatchesQuerySchema, matchIdParamSchema } from './matches.schema';
 
-/**
- * Match routes (spec §7, Batch 8).
- *
- * `requireOnboarded` on every route: matching is part of the product proper,
- * and an account that has not passed the under-18 check must not reach it.
- *
- * There is no POST — matches are created by mutual likes in the discovery
- * module and can be created no other way.
- */
 export const matchesRouter: Router = Router();
 
 matchesRouter.use(authenticate, requireOnboarded);

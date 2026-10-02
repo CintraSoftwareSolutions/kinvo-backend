@@ -3,26 +3,13 @@ import { z } from 'zod';
 import { PAGINATION } from '@config/constants';
 import { ModerationSeverity, ReportStatus } from '@/db/prisma';
 
-/** Moderation request validation (spec §4.10, Batch 10). */
-
-/**
- * What is being checked. Kept as a closed list rather than a free string so a
- * typo cannot create a subject type the moderation queue silently never
- * displays.
- */
 export const SUBJECT_TYPES = ['message', 'bio', 'prompt_answer', 'display_name', 'photo'] as const;
 
 export const checkContentSchema = z
   .object({
     content: z.string().trim().min(1).max(4000),
     subject_type: z.enum(SUBJECT_TYPES).default('message'),
-    /** Present when checking something already stored, absent for a draft. */
     subject_id: z.string().uuid().optional(),
-    /**
-     * spec §5.4: recorded when the user pushes past a warning. This is a
-     * record of a decision, never permission to skip the check — the server
-     * runs it either way.
-     */
     overridden: z.boolean().optional(),
   })
   .strict();

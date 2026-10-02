@@ -18,8 +18,6 @@ import type {
   UpdateContactBody,
 } from './safety.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 // --- reports ---------------------------------------------------------------
 
 export async function createReport(req: Request, res: Response): Promise<void> {

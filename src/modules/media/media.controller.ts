@@ -16,8 +16,6 @@ import * as mediaService from './media.service';
 import * as photosService from './photos.service';
 import * as verificationService from './verification.service';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function createUpload(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const body = req.body as CreateUploadBody;

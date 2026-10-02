@@ -28,41 +28,8 @@ import { getPrimaryPhotoUrlsFor } from '@modules/media/photos.service';
 import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 
-/**
- * Video calling (spec §5.7, §7, Batch 14).
- *
- * Two rules shape this whole module.
- *
- * FIRST: a token is scoped to one room and nothing else. That is enforced in
- * `video.provider.ts`; here the job is to never ask for a token unless the
- * caller is genuinely a participant in a live match. The permission check is
- * therefore not a formality — it is the only thing standing between a stranger
- * and someone's camera.
- *
- * SECOND: the call is a row before it is a room. Every state change is
- * persisted and then announced, never the other way round, so a rollback cannot
- * leave the other person's phone ringing for a call that does not exist.
- */
-
-/**
- * Whether both participants must be verified to call.
- *
- * The spec leaves this to policy ("both verified if policy requires"). There is
- * no such policy today, and imposing one would block calling for nearly
- * everyone, because verification is only mandatory for Cuddle mode.
- *
- * One constant so turning it on is a one-line change rather than a hunt through
- * the permission check.
- */
 const REQUIRE_VERIFICATION_TO_CALL = false;
 
-/**
- * A call that nobody answered stops ringing after this long.
- *
- * Read at query time rather than swept, for the same reason match expiry is:
- * a job that is late must not leave a call ringing forever, and it must not be
- * load-bearing for correctness.
- */
 const RINGING_TIMEOUT_MS = 60 * 1000;
 
 const PARTICIPANT_SELECT = {
@@ -93,9 +60,7 @@ export interface CallView {
   match_id: string;
   mode: Mode;
   status: CallStatus;
-  /** What the call STARTED as. Either side may turn video on mid-call. */
   kind: CallKind;
-  /** True for the person who started it — the app renders a different screen. */
   is_initiator: boolean;
   other_user: UserCompact;
   started_at: string | null;
@@ -106,33 +71,14 @@ export interface CallView {
 }
 
 export interface CallWithToken extends CallView {
-  /**
-   * The room and the credential to enter it.
-   *
-   * Returned only to a participant, and only while the call is live. A history
-   * entry carries no token — there is nothing to join.
-   */
   video: {
     room_name: string;
     token: string;
-    /**
-     * The media server to connect to, or null when none is configured.
-     *
-     * Null is a working answer, not an error: the call itself still rings, is
-     * answered and ends, and the app says that video is unavailable here rather
-     * than failing. That is how staging runs without a LiveKit project.
-     */
     server_url: string | null;
     expires_at: string;
   };
 }
 
-/**
- * Ringing is decided at READ time (see RINGING_TIMEOUT_MS).
- *
- * A row still marked `ringing` an hour later was missed, whatever the column
- * says, and answering it must fail.
- */
 function isStale(call: { status: CallStatus; created_at: Date }, now = new Date()): boolean {
   return (
     call.status === CallStatus.ringing &&
@@ -171,12 +117,6 @@ async function compactFor(user: ParticipantRow): Promise<UserCompact> {
   return toUserCompact(user, photoUrls.get(user.id) ?? null);
 }
 
-/**
- * Loads a call the viewer participates in, or 404s.
- *
- * 404 rather than 403, and the same 404 whether the call belongs to someone
- * else or does not exist. A 403 would confirm the id is real (spec §4.4).
- */
 async function loadParticipating(viewerId: string, callId: string): Promise<CallRow> {
   const call = await prisma.callSession.findFirst({
     where: {
@@ -193,13 +133,6 @@ async function loadParticipating(viewerId: string, callId: string): Promise<Call
   return call;
 }
 
-/**
- * Starts a call.
- *
- * Grants a token only after the pair is confirmed reachable — same match, still
- * active, neither side blocked or gone. `isPairReachable` is the shared rule
- * that messaging uses, so calling cannot drift into being the laxer of the two.
- */
 export async function startCall(
   userId: string,
   matchId: string,
@@ -257,12 +190,6 @@ export async function startCall(
     return withToken(existing, userId, await compactFor(participantsOf(existing, userId).other));
   }
 
-  // The id is generated HERE rather than by the database, so the room name can
-  // be derived from it in the same insert. Creating the row first and naming the
-  // room afterwards would leave a window where a call exists with no room, and
-  // deriving the name from a second random value would mean the stored name and
-  // the token's grant were different strings — a token that silently admits its
-  // holder to a room the app is not in.
   const callId = randomUUID();
 
   const created = await prisma.callSession.create({
@@ -283,8 +210,6 @@ export async function startCall(
   const otherCompact = await compactFor(other);
   const view = await withToken(created, userId, otherCompact);
 
-  // PERSISTED FIRST. Everything below is delivery, and all of it is
-  // best-effort: a push that fails must not undo a call that exists.
   emitCallIncoming(other.id, {
     call_id: created.id,
     match_id: matchId,
@@ -327,29 +252,10 @@ async function withToken(
   };
 }
 
-/**
- * Issues a token for THIS call's room.
- *
- * The room comes from the stored `room_name`, not from anything a caller
- * passed, which is what makes "never issue a token for an arbitrary room" a
- * property of the code rather than a convention.
- */
 function issueFor(call: { room_name: string }, userId: string): Promise<VideoToken> {
   return getVideoProvider().issueToken({ roomName: call.room_name, userId });
 }
 
-/**
- * Closes the room behind a call that has ended.
- *
- * Deliberately swallows its error. The call is already ended in the database
- * and both sides have been told; the room is the provider's copy of a decision
- * that has been made. Letting a provider outage fail a hang-up would leave the
- * caller looking at a call they cannot leave.
- *
- * Not awaited by the caller for the same reason — the response should not wait
- * on a third party — but the promise is not dropped either, so a failure is
- * always logged.
- */
 function closeRoomFor(call: { id: string; room_name: string }): void {
   void getVideoProvider()
     .closeRoom(call.room_name)
@@ -358,7 +264,6 @@ function closeRoomFor(call: { id: string; room_name: string }): void {
     });
 }
 
-/** The callee accepts. Only the person who did not start it may answer. */
 export async function answerCall(userId: string, callId: string): Promise<CallWithToken> {
   const call = await loadParticipating(userId, callId);
 
@@ -390,7 +295,6 @@ export async function answerCall(userId: string, callId: string): Promise<CallWi
   return withToken(answered, userId, await compactFor(other));
 }
 
-/** The callee refuses. */
 export async function declineCall(userId: string, callId: string): Promise<CallView> {
   const call = await loadParticipating(userId, callId);
 
@@ -418,13 +322,6 @@ export async function declineCall(userId: string, callId: string): Promise<CallV
   return toView(declined, userId, await compactFor(other));
 }
 
-/**
- * Ends a call. Either participant may, at any live stage.
- *
- * Duration is computed from `answered_at`, not from `started_at`: a call that
- * rang for forty seconds and was picked up for ten lasted ten. Billing and
- * "how long did we talk" both want the connected time.
- */
 export async function endCall(userId: string, callId: string): Promise<CallView> {
   const call = await loadParticipating(userId, callId);
 
@@ -463,13 +360,6 @@ export async function endCall(userId: string, callId: string): Promise<CallView>
   return toView(ended, userId, await compactFor(other));
 }
 
-/**
- * Re-issues a token for a live call (reconnect, or a call outstaying its TTL).
- *
- * This is what makes a one-hour token acceptable rather than a call-length
- * token that never expires. Refused once the call is over: there is nothing to
- * rejoin, and a token for a finished room is a credential with no purpose.
- */
 export async function issueCallToken(userId: string, callId: string): Promise<CallWithToken> {
   const call = await loadParticipating(userId, callId);
 
@@ -489,7 +379,6 @@ export async function issueCallToken(userId: string, callId: string): Promise<Ca
   return withToken(call, userId, await compactFor(other));
 }
 
-/** Call history, newest first. */
 export async function listCalls(
   userId: string,
   options: { limit: number; cursor?: string },
@@ -539,18 +428,6 @@ export interface SafetyActionResult {
   report_id: string | null;
 }
 
-/**
- * In-call safety actions (spec §5.7).
- *
- * All three are recorded whatever else happens, because the record is the point:
- * a pattern of flags against one account is what moderation acts on, and an
- * action that failed to record because a downstream step failed is evidence
- * lost at the moment it mattered.
- *
- * The reported user is never told who reported them, through this or any other
- * path (spec §5.7).
- */
-/** Past this many updates in an hour, contacts aren't emailed again. */
 const CALL_UPDATES_PER_HOUR = 5;
 
 export async function recordSafetyAction(
@@ -593,10 +470,6 @@ export async function recordSafetyAction(
   }
 
   if (input.action === CallSafetyActionType.send_live_update) {
-    // The same trusted-contact alerting as an emergency, one place that knows
-    // how to reach someone's contacts, so a fix reaches both. Capped like an
-    // emergency, and for the same reason: an update button must not become a
-    // way to fill someone's inbox. The action itself is already recorded.
     const [sentThisHour, user, contacts] = await Promise.all([
       prisma.callSafetyAction.count({
         where: {
@@ -638,13 +511,6 @@ export async function recordSafetyAction(
   return { call_id: call.id, action: input.action, call_status: status, report_id: reportId };
 }
 
-/**
- * Marks calls that rang out as missed.
- *
- * Bookkeeping, like the match sweep: `isStale` already reports a timed-out call
- * as missed at read time, so this only settles the column for history queries
- * and cannot be load-bearing.
- */
 export async function sweepRingingCalls(now: Date = new Date()): Promise<number> {
   const result = await prisma.callSession.updateMany({
     where: {
@@ -657,36 +523,9 @@ export async function sweepRingingCalls(now: Date = new Date()): Promise<number>
   return result.count;
 }
 
-/**
- * The longest a call may stay `active` before it is closed as abandoned.
- *
- * The backstop for a call nobody ever ended. Both apps normally send a hang-up,
- * and the provider's `room-ended` callback closes what they miss — but if the
- * provider is not configured, or a callback is lost, or two phones die at once,
- * the row would otherwise read `active` forever. It would sit at the top of
- * both people's history claiming to be in progress.
- *
- * Four hours is far longer than any real call and short enough that an
- * abandoned one is tidied the same day.
- */
 const MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
-
-/** Twilio's status callback event names. Only the terminal one changes state. */
 const ROOM_ENDED = 'room-ended';
 
-/**
- * Applies a verified status callback from the video provider.
- *
- * THE GAP THIS CLOSES: a call is `active` from the moment it is answered until
- * somebody sends a hang-up. If both clients disappear — crash, dead battery,
- * tunnel — nothing ever sends one, and the call stays `active` indefinitely.
- * The provider knows the room ended; this is how it tells us.
- *
- * Idempotent by state rather than by an event ledger: ending an already-ended
- * call is a no-op, so a retried callback costs nothing. Providers retry
- * routinely, and a ledger table would be bookkeeping for a question the row
- * already answers.
- */
 export async function applyRoomEvent(event: {
   type: string;
   roomName: string;
@@ -705,9 +544,6 @@ export async function applyRoomEvent(event: {
   });
 
   if (!call) {
-    // A room we have no record of. Not an error: rooms can outlive their call
-    // row after a database reset, and answering 200 stops the provider
-    // retrying something nothing will ever act on.
     logger.warn({ room: event.roomName }, 'video callback for an unknown room');
     return { applied: false };
   }
@@ -746,14 +582,6 @@ export async function applyRoomEvent(event: {
   return { applied: true };
 }
 
-/**
- * Closes calls that were answered and never ended.
- *
- * The backstop described on MAX_CALL_DURATION_MS. Unlike `sweepRingingCalls`,
- * this one is NOT purely cosmetic: nothing else closes an abandoned active
- * call when the provider callback does not arrive, so without it the row stays
- * `active` forever.
- */
 export async function sweepStuckCalls(now: Date = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - MAX_CALL_DURATION_MS);
 

@@ -8,8 +8,6 @@ import * as deckService from './deck.service';
 import * as swipeService from './swipe.service';
 import type { PaginationQuery, SwipeBody } from './discovery.schema';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function getDeck(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const mode = req.params.mode as Mode;

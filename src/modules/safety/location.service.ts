@@ -15,25 +15,7 @@ import { logger } from '@utils/logger';
 import { type ContactAlert, countEmailed, emailContacts, emergencySummary } from './contact-alerts';
 import { type PlanForContact, emergencyAlertEmail, safetyTeamEmail } from './safety.emails';
 
-/**
- * Live location and emergency (spec §5.7, Batch 12).
- *
- * spec §5.7: "Live location is high-risk data. Explicit start/stop, hard TTL,
- * auto-expire when the plan ends. Retain no historical trail beyond immediate
- * safety need."
- *
- * Every rule in this file follows from that sentence:
- *
- *  - Sharing NEVER starts implicitly. There is no "always on" setting, and no
- *    call anywhere else in the codebase starts a session.
- *  - Every session carries an expiry set at creation. There is no way to make
- *    one that does not end.
- *  - Ending a session deletes the position trail. The session row survives as
- *    the record that sharing happened, because a safety investigation needs
- *    that; the movements do not.
- */
 
-/** Longest a single share may run. Long enough for an evening, not a day. */
 const MAX_DURATION_MINUTES = 8 * 60;
 const DEFAULT_DURATION_MINUTES = 3 * 60;
 
@@ -63,13 +45,6 @@ function toView(session: {
   };
 }
 
-/**
- * Starts sharing. Explicit, bounded, and one at a time.
- *
- * A second concurrent session would leave a trail the user cannot see and
- * cannot stop from the one screen showing "sharing", so starting again ends the
- * previous one first.
- */
 export async function startSharing(
   userId: string,
   input: { plan_id?: string; duration_minutes?: number },
@@ -149,13 +124,6 @@ export async function activeSession(userId: string): Promise<LiveLocationSession
   return session ? toView(session) : null;
 }
 
-/**
- * Records a position on an active session.
- *
- * Refuses on an expired session rather than extending it: the TTL is the
- * user's consent boundary, and a client that keeps sending must not be able to
- * push it outward.
- */
 export async function recordPing(
   userId: string,
   sessionId: string,
@@ -174,15 +142,6 @@ export async function recordPing(
   await recordLocationPing(sessionId, coordinates, accuracyMetres);
 }
 
-/**
- * The trail, readable only by the person sharing it.
- *
- * Trusted contacts are notified that sharing STARTED and are given a way to ask
- * the user directly. They do not get an endpoint returning coordinates: they
- * have no account here, so there is nothing to authenticate them with, and a
- * shareable link to someone's live position is exactly the artefact §5.7 is
- * warning about.
- */
 export async function readTrail(userId: string, sessionId: string) {
   const session = await prisma.liveLocationSession.findFirst({
     where: { id: sessionId, user_id: userId },
@@ -211,47 +170,22 @@ export interface EmergencyView {
   type: EmergencyEventType;
   note: string | null;
   location: Coordinates | null;
-  /**
-   * How many trusted contacts were emailed. Only known as it is raised, so
-   * `null` in the history rather than a number that would be a guess.
-   */
   contacts_notified: number | null;
-  /** Each trusted contact and what happened to them. Empty in the history. */
   contacts: ContactAlert[];
-  /** What the user is told happened, as they should see it. */
   summary: string | null;
   created_at: string;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/**
- * Past this many alerts in an hour, contacts aren't emailed again. They already
- * have this hour's alerts, and without a cap the button could flood the inbox
- * of anyone the user typed in as a contact.
- */
 const EMERGENCY_ALERTS_PER_HOUR = 5;
 
-/**
- * Emergency help (spec §5.7).
- *
- * Records the event, attaches a position if one was given, emails the user's
- * trusted contacts, copies the safety team, and tells the user exactly who
- * was reached. A contact without an email address, or an email that didn't
- * send, is reported as not reached — never as told.
- *
- * Nothing here can fail in a way that loses the event: the row is written
- * first, and alerting is best-effort afterwards. Someone pressing this button
- * is having the worst moment this app will ever be part of, and "the request
- * errored" is not an acceptable outcome.
- */
 export async function raiseEmergency(
   userId: string,
   input: {
     type?: EmergencyEventType;
     note?: string;
     coordinates?: Coordinates;
-    /** The phone's offset from UTC, so times read as the user's own. */
     utcOffsetMinutes?: number;
   },
 ): Promise<EmergencyView> {
@@ -344,11 +278,6 @@ export async function raiseEmergency(
   };
 }
 
-/**
- * The plan the user is most likely on right now: a confirmed plan that
- * started in the last six hours or starts in the next two. Who they are with
- * and where is what anyone trying to help needs first.
- */
 async function currentPlanFor(userId: string, at: Date): Promise<PlanForContact | null> {
   const plan = await prisma.plan.findFirst({
     where: {
@@ -412,13 +341,6 @@ export async function listEmergencies(userId: string): Promise<EmergencyView[]> 
   );
 }
 
-/**
- * Ends sessions whose plan finished, then drops every expired trail.
- *
- * spec §5.7 asks for auto-expiry when the plan ends, which a TTL alone does not
- * give: a plan cancelled an hour in should stop sharing then, not when the
- * three hours happen to run out.
- */
 export async function sweepLiveLocations(now: Date = new Date()): Promise<number> {
   await prisma.liveLocationSession.updateMany({
     where: {

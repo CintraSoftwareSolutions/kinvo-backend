@@ -21,13 +21,6 @@ import {
   userIdParamSchema,
 } from './safety.schema';
 
-/**
- * Reports (spec §7, §5.7, Batch 12).
- *
- * Deliberately NOT behind `requireOnboarded`. Someone can be harassed by a
- * profile they saw during onboarding, and a safety route that first demands a
- * completed profile is a safety route that fails the person who needs it most.
- */
 export const reportsRouter: Router = Router();
 
 reportsRouter.use(authenticate);
@@ -38,17 +31,12 @@ reportsRouter.post(
   asyncHandler(controller.createReport),
 );
 
-/** Reports this user FILED. There is no endpoint for reports about them. */
 reportsRouter.get(
   '/',
   validate({ query: listQuerySchema }),
   asyncHandler(controller.listMyReports),
 );
 
-/**
- * The moderation queue — the only path that reveals a reporter's identity, and
- * the reason it is behind a role gate rather than the block-style 404.
- */
 reportsRouter.get(
   '/review',
   requireRole('moderator', 'admin'),
@@ -63,7 +51,6 @@ reportsRouter.patch(
   asyncHandler(controller.resolveReport),
 );
 
-/** Blocks (spec §5.5). Also not gated on onboarding, for the same reason. */
 export const blocksRouter: Router = Router();
 
 blocksRouter.use(authenticate);
@@ -78,13 +65,6 @@ blocksRouter.delete(
   asyncHandler(controller.unblock),
 );
 
-/**
- * Trusted contacts, live location, and emergency (spec §5.7).
- *
- * `requireOnboarded` here: these attach to plans and matches, which a pending
- * account cannot have. Reports and blocks above are the exception because they
- * protect someone rather than extend the product.
- */
 export const safetyRouter: Router = Router();
 
 safetyRouter.use(authenticate, requireOnboarded);
@@ -109,7 +89,6 @@ safetyRouter.delete(
   asyncHandler(controller.deleteContact),
 );
 
-/** Literal path first, so it is never parsed as a session id. */
 safetyRouter.get('/location/active', asyncHandler(controller.activeSession));
 
 safetyRouter.post(

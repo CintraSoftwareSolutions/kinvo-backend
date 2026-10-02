@@ -18,15 +18,6 @@ import { otherParticipantId } from './participants';
 import { deviceRoom, userRoom } from './rooms';
 import { authenticateSocket } from './socket.auth';
 
-/**
- * The Socket.IO server (spec §7, Batch 9).
- *
- * Realtime is a DELIVERY layer over the REST API, never a second write path.
- * Every state change still goes through a service that persists it; the socket
- * carries the news afterwards. That is why a dropped socket costs a refresh
- * rather than a message, and why the whole feature can be switched off without
- * the product losing correctness.
- */
 
 let io: Server | null = null;
 
@@ -76,26 +67,14 @@ async function onConnection(socket: Socket): Promise<void> {
     return;
   }
 
-  // REGISTERED FIRST, before any await.
-  //
-  // Socket.IO drops an incoming packet that has no listener yet. Every await
-  // between the connection opening and this line is a window in which a client
-  // that emits immediately on connect — which is exactly what a chat app does
-  // when it reopens a thread — silently loses the event.
   registerHandlers(socket, user.id);
 
-  // Refreshes the presence key before its TTL lapses. Without it a user reading
-  // quietly for two minutes drops offline while still connected.
   const heartbeat = setInterval(() => {
     void refresh(user.id);
   }, PRESENCE_HEARTBEAT_SECONDS * 1000);
 
-  // Node keeps the process alive for pending timers; without unref a graceful
-  // shutdown waits on every connected socket's heartbeat.
   heartbeat.unref();
 
-  // Every socket the user has open joins one room, so a message reaches their
-  // phone and their tablet from a single emit.
   const ready = (async () => {
     await socket.join(userRoom(user.id));
     // So signing this device out can close its connection (see disconnectDevice).
@@ -111,11 +90,6 @@ async function onConnection(socket: Socket): Promise<void> {
     clearInterval(heartbeat);
 
     void (async () => {
-      // Waits for the connect sequence to finish before undoing it. A socket
-      // that opens and closes within a few milliseconds — a flaky network, an
-      // app backgrounded on launch — would otherwise have its markOnline land
-      // AFTER its markOffline and leave a phantom "online" entry standing
-      // until the TTL lapsed.
       await ready.catch(() => undefined);
 
       const wentOffline = await markOffline(user.id, socket.id);
@@ -135,14 +109,7 @@ async function onConnection(socket: Socket): Promise<void> {
   }
 }
 
-/**
- * Validates an incoming payload before it reaches any logic.
- *
- * Socket payloads are as untrusted as request bodies and get the same
- * treatment: nothing unvalidated reaches a service (spec §4.10). A bad payload
- * answers with the same error vocabulary as REST rather than a thrown exception
- * that would take the connection down.
- */
+
 function handle<TEvent extends keyof typeof CLIENT_EVENT_SCHEMAS>(
   socket: Socket,
   event: TEvent,
@@ -175,20 +142,6 @@ function handle<TEvent extends keyof typeof CLIENT_EVENT_SCHEMAS>(
   });
 }
 
-/**
- * Typing goes straight to the other participant's USER room, not a shared
- * conversation room.
- *
- * A conversation room would have to be joined first, which makes delivery
- * depend on a join the sender cannot observe — the recipient silently misses
- * indicators until they happen to have opened the thread. Every conversation
- * has exactly two people (decision #11), so addressing the other one directly
- * is both simpler and impossible to race.
- *
- * Returning null when the caller is not a participant is also the access check:
- * nothing is emitted for a conversation you are not in, so a client cannot
- * watch strangers type by guessing an id.
- */
 async function typingRecipient(userId: string, conversationId: string): Promise<string | null> {
   return otherParticipantId(conversationId, userId);
 }

@@ -1,19 +1,6 @@
 import { prisma } from '@/db/prisma';
 import { ApiError } from '@utils/api-error';
 
-/**
- * Trusted contacts (spec §5.7, Batch 12).
- *
- * People outside Kinvo who receive plan and safety updates — a friend, a
- * flatmate, a parent. They have no account here and never see the app; they are
- * a phone number or an email the user nominated.
- *
- * That makes this the most sensitive personal data in the product after live
- * location: it is contact details for THIRD PARTIES who never agreed to
- * anything. It is never surfaced to anyone but the user who entered it, and it
- * is scrubbed on account deletion.
- */
-
 const MAX_CONTACTS = 5;
 
 export interface TrustedContactView {

@@ -2,19 +2,6 @@ import { getEmailProvider } from '@modules/notifications/providers';
 import type { EmailMessage } from '@/providers/email.provider';
 import { logger } from '@utils/logger';
 
-/**
- * Telling a user's trusted contacts something (spec §5.7): an emergency, a
- * plan, a call. By email, the one channel that works for every contact in
- * every country today; SMS can join it here without the callers changing.
- *
- * Every result says what really happened to each contact. The user is going
- * to rely on it to decide whether anyone knows where they are, so a contact
- * who wasn't reached must never read as told.
- */
-
-/**
- * `already_told`: told about the same plan before, so not emailed again.
- */
 export type ContactDelivery = 'emailed' | 'no_email' | 'failed' | 'already_told';
 
 export interface ContactAlert {
@@ -29,7 +16,6 @@ export interface AlertableContact {
   email: string | null;
 }
 
-/** Emails each of [contacts] the message [compose] writes for them. */
 export async function emailContacts(
   contacts: AlertableContact[],
   compose: (contact: { name: string; email: string }) => EmailMessage,
@@ -48,12 +34,6 @@ export async function emailContacts(
         const outcome = await provider.send(compose({ name, email }));
         return { id, name, delivery: outcome.status === 'sent' ? 'emailed' : 'failed' };
       } catch (error) {
-        // Providers report failure in their outcome; this is the safety net for
-        // one that throws. The contact id, never their address (spec §4).
-        //
-        // Both kinds of failure read as one 'failed' here, unlike password
-        // reset: this list goes back to the person who raised the alert, who is
-        // owed the truth about their own contacts either way.
         logger.error({ err: error, contact_id: id }, 'trusted contact email failed');
         return { id, name, delivery: 'failed' };
       }
@@ -65,7 +45,6 @@ export function countEmailed(alerts: ContactAlert[]): number {
   return alerts.filter((alert) => alert.delivery === 'emailed').length;
 }
 
-/** What the user is told happened, for anything short of an emergency. */
 export function deliverySummary(alerts: ContactAlert[]): string {
   const emailed = countEmailed(alerts);
 
@@ -83,10 +62,6 @@ export function deliverySummary(alerts: ContactAlert[]): string {
   return `We emailed ${emailed} of your ${alerts.length} trusted contacts.`;
 }
 
-/**
- * What the user is told happened to their emergency alert. Truthful above
- * all: it's what they'll decide their next move on.
- */
 export function emergencySummary(alerts: ContactAlert[]): string {
   const emailed = countEmailed(alerts);
 

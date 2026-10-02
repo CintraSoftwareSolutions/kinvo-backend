@@ -6,7 +6,6 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 import { sendError } from '@utils/response';
 
-/** Express body-parser errors carry these extra fields. */
 interface BodyParserError extends Error {
   type?: string;
   status?: number;
@@ -14,7 +13,6 @@ interface BodyParserError extends Error {
   body?: unknown;
 }
 
-/** Spec 4.2: validation `details` is keyed by field, each value a message list. */
 export function zodErrorToDetails(error: ZodError): Record<string, string[]> {
   const details: Record<string, string[]> = {};
 
@@ -42,14 +40,10 @@ function normalise(error: unknown): ApiError {
 
   const candidate = error as BodyParserError | undefined;
 
-  // express.json() rejects oversized bodies before the route ever runs.
   if (candidate?.type === 'entity.too.large') {
     return new ApiError(ERROR_CODES.FILE_TOO_LARGE, 'That request body is too large.');
   }
 
-  // Malformed JSON — not field-specific, so BAD_REQUEST rather than VALIDATION_FAILED.
-  // `body` is checked first: narrowing to SyntaxError would discard the
-  // body-parser fields that distinguish this from an ordinary syntax error.
   if (candidate?.body !== undefined && candidate instanceof SyntaxError) {
     return ApiError.badRequest('The request body is not valid JSON.');
   }

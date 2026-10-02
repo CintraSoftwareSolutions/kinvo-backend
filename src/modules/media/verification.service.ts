@@ -16,24 +16,6 @@ import { logger } from '@utils/logger';
 import { claimAsset } from './media.service';
 import type { VerificationView } from './media.types';
 
-/**
- * Identity verification (spec §7, Batch 4).
- *
- * Three methods, a three-step wizard, `pending -> approved | rejected`, and the
- * badge derived from the latest approved record rather than stored as a
- * free-standing flag.
- *
- * Documents go to the verification bucket, never the media bucket. Government
- * ID images are the most sensitive data in this system: a separate bucket means
- * a separate policy, a separate lifecycle, and a much shorter URL lifetime, and
- * none of that can be undone by someone editing the photo bucket's config.
- *
- * The verification badge matters beyond a tick on a profile: `verified_only` is
- * a hard discovery filter (spec §5.3), verified users rank higher in the deck,
- * and from Batch 5 enabling Cuddle mode is expected to require it.
- */
-
-/** submit -> upload document -> confirm. Reported so the app can render progress. */
 export const TOTAL_STEPS = 3;
 
 const METHODS: VerificationMethod[] = [
@@ -81,13 +63,6 @@ function toView(
     is_verified: isVerified,
   };
 }
-
-/**
- * The badge, derived rather than trusted.
- *
- * `users.is_verified` is a denormalised copy kept for the deck's hard filter and
- * ranking; this is the source of truth that keeps it honest.
- */
 export async function hasApprovedVerification(userId: string): Promise<boolean> {
   const approved = await prisma.verification.findFirst({
     where: { user_id: userId, status: VerificationStatus.approved },
@@ -97,7 +72,6 @@ export async function hasApprovedVerification(userId: string): Promise<boolean> 
   return approved !== null;
 }
 
-/** Recomputes the denormalised flag from the records. */
 export async function refreshVerifiedFlag(userId: string): Promise<boolean> {
   const isVerified = await hasApprovedVerification(userId);
 
@@ -117,13 +91,6 @@ export async function getVerificationStatus(userId: string): Promise<Verificatio
 
   return toView(latest, await hasApprovedVerification(userId));
 }
-
-/**
- * Step 1 — start a verification attempt.
- *
- * Refuses a second attempt while one is already awaiting review, so a user
- * cannot flood the moderation queue by tapping repeatedly.
- */
 export async function startVerification(
   userId: string,
   method: VerificationMethod,
@@ -154,13 +121,6 @@ export async function startVerification(
   return toView(record, false);
 }
 
-/**
- * Step 2 — attach the document.
- *
- * `claimAsset` enforces that the upload belongs to the caller, finished, and is
- * of kind `verification_document`, which by policy lives in the verification
- * bucket. A profile photo cannot be submitted as an ID.
- */
 export async function attachVerificationDocument(
   userId: string,
   verificationId: string,
@@ -192,12 +152,6 @@ export async function attachVerificationDocument(
   return toView(updated, false);
 }
 
-/**
- * Step 3 — submit for review.
- *
- * The `social` method carries no document, so it may submit without one; the
- * other two may not.
- */
 export async function submitVerification(
   userId: string,
   verificationId: string,
@@ -228,10 +182,6 @@ export async function submitVerification(
   return toView(updated, false);
 }
 
-/**
- * Moderator decision. Batch 15 puts an admin endpoint in front of this; the
- * transition lives here so the badge can never drift from the records.
- */
 export async function reviewVerification(options: {
   verificationId: string;
   reviewerId: string;
@@ -266,12 +216,6 @@ export async function reviewVerification(options: {
 
   const isVerified = await refreshVerifiedFlag(record.user_id);
 
-  // AUDITED, always. This decision gates a badge that is a hard discovery
-  // filter and, for Cuddle, a gate on the mode itself — so "who approved this
-  // account, and when" has to be answerable later. Written after the decision
-  // rather than inside its transaction: a failure to log must not roll back a
-  // review that already happened, and a review with no log is recoverable
-  // while a lost decision is not.
   try {
     await prisma.adminAuditLog.create({
       data: {
@@ -293,9 +237,6 @@ export async function reviewVerification(options: {
     logger.error({ err: error, verification_id: record.id }, 'failed to write admin audit log');
   }
 
-  // Tell the person who has been waiting. Persisted to the feed and pushed,
-  // like every other notification (spec §7) — a push-only result would vanish
-  // with the banner, and this is something people actively check for.
   await notify({
     userId: record.user_id,
     category: 'verification',
@@ -318,16 +259,6 @@ export async function reviewVerification(options: {
 // Review side (admin / moderator)
 // ---------------------------------------------------------------------------
 
-/**
- * Verification review.
- *
- * The admin PANEL is a separate codebase. What lives here is the surface it
- * calls: a queue to read and a decision to record. Keeping the decision on this
- * side rather than letting the panel write the row directly is what makes the
- * rules enforceable — a review is refused twice, the badge is recomputed from
- * the record, the action is audited, and the user is told. A panel writing
- * `status = approved` straight into the table would do none of that.
- */
 
 export interface VerificationReviewItem {
   id: string;
@@ -336,13 +267,6 @@ export interface VerificationReviewItem {
   submitted_at: string | null;
   created_at: string;
   user: UserCompact;
-  /**
-   * Presigned, from the VERIFICATION bucket, with that bucket's much shorter
-   * lifetime. Minted per request and never stored — a government ID behind a
-   * long-lived URL is the same as a public one, just slower.
-   *
-   * Null for social verifications, which have no document.
-   */
   document_url: string | null;
   social_provider: string | null;
 }
@@ -358,9 +282,6 @@ async function toReviewItem(
   row: ReviewRow,
   photoUrl: string | null,
 ): Promise<VerificationReviewItem> {
-  // An asset with no `uploaded_at` is an intent, not an asset (spec §4.8), so
-  // it gets no URL — presigning one would hand the reviewer a link to bytes
-  // that never arrived.
   const document_url =
     row.asset && row.asset.uploaded_at
       ? await presignDownload({
@@ -381,17 +302,6 @@ async function toReviewItem(
   };
 }
 
-/**
- * The review queue.
- *
- * Oldest FIRST, unlike every other list in this API. A review queue is work to
- * get through, not a feed: newest-first leaves the oldest request at the bottom
- * for ever, and the person who has waited longest is the one who should be seen
- * next.
- *
- * Only SUBMITTED records appear. A half-finished wizard is not waiting on
- * anybody.
- */
 export async function listForReview(options: {
   status?: VerificationStatus;
   limit: number;

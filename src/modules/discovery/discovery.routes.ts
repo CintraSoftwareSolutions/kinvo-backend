@@ -7,17 +7,6 @@ import { asyncHandler } from '@utils/async-handler';
 import * as controller from './discovery.controller';
 import { modeParamSchema, paginationQuerySchema, swipeBodySchema } from './discovery.schema';
 
-/**
- * Discovery routes (spec §7, Batch 7).
- *
- * `requireOnboarded` is mounted on EVERY route here, not selectively. An
- * account created by social or phone sign-in has no date of birth until
- * onboarding runs the under-18 check, so letting one reach a deck is a legal
- * problem rather than a UX one.
- *
- * The mode is a path parameter throughout, so no request can reach a service
- * without one.
- */
 export const discoveryRouter: Router = Router();
 
 discoveryRouter.use(authenticate, requireOnboarded);

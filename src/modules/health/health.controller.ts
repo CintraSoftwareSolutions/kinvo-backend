@@ -11,13 +11,6 @@ import { sendSuccess } from '@utils/response';
 
 const startedAt = Date.now();
 
-/**
- * Spec 4.12: liveness, no auth.
- *
- * Deliberately checks no dependency. A liveness probe that fails when Postgres
- * blips causes the orchestrator to kill healthy processes. Dependency health is
- * a separate question — see `getReadiness`.
- */
 export function getHealth(_req: Request, res: Response): void {
   sendSuccess(res, {
     status: 'ok',
@@ -29,17 +22,6 @@ export function getHealth(_req: Request, res: Response): void {
   });
 }
 
-/**
- * Readiness: can this process actually serve traffic?
- *
- * Distinct from liveness on purpose. A load balancer uses this to stop routing
- * to an instance that has lost its database, while the orchestrator keeps using
- * `/health` to decide whether the process itself is alive. Wiring both to the
- * same check makes a brief Postgres outage into a restart loop.
- *
- * Returns 503 when a dependency is down so the balancer reacts to the status
- * code rather than having to parse the body.
- */
 export async function getReadiness(_req: Request, res: Response): Promise<void> {
   const [database, redis, storage] = await Promise.all([
     isDatabaseReachable(),

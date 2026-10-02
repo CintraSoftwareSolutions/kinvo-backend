@@ -6,8 +6,6 @@ import { sendSuccess } from '@utils/response';
 import type { UpdateModeBody } from './modes.schema';
 import * as modesService from './modes.service';
 
-/** HTTP translation only. No business logic, no database access (spec §0.5). */
-
 export async function listModes(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const result = await modesService.listModes(user.id);

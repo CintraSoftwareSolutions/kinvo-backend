@@ -12,33 +12,14 @@ import { ApiError } from '@utils/api-error';
 import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 
-/**
- * Moderation (spec §5.4, Batch 10).
- *
- * Two rules govern everything in this file:
- *
- *  1. **Advisory, never blocking.** The check returns findings and a
- *     recommendation. It does not refuse a send. The client shows "Edit" or
- *     "Send anyway", and an override is recorded — a user pushing past a scam
- *     warning is exactly what the moderation team needs to see later.
- *
- *  2. **Fail open.** If the provider is slow or throws, the send is allowed and
- *     the content is queued for asynchronous review. Blocking a user's message
- *     on a third party's outage is a worse failure than reviewing it late.
- */
-
-/** A slow provider must not become a slow product. */
 const PROVIDER_TIMEOUT_MS = 2000;
 
-/** At or above this, the client shows a warning dialog before sending. */
 const WARN_THRESHOLD = ModerationSeverity.low;
 
-/** At or above this, the content is queued for a human regardless of override. */
 const FLAG_THRESHOLD = ModerationSeverity.medium;
 
 let provider: ModerationProvider = new RulesModerationProvider();
 
-/** Swapping the provider is a one-line change — that is the point of decision #8. */
 export function setModerationProvider(next: ModerationProvider): void {
   provider = next;
 }
@@ -51,14 +32,6 @@ export function resetModerationProvider(): void {
   provider = new RulesModerationProvider();
 }
 
-/**
- * Content is hashed, never stored.
- *
- * The check row has to be linkable to what was checked so a moderator can tell
- * two reports about the same text apart — but keeping a copy of every private
- * message a user considered sending, including the ones they edited away, is a
- * surveillance database nobody asked for.
- */
 function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 64);
 }
@@ -74,9 +47,6 @@ async function withTimeout(content: string): Promise<ModerationResult> {
       }),
     ]);
   } catch (error) {
-    // FAIL OPEN (spec §5.4). Never rethrow: the caller is about to let the user
-    // send, and an exception here would turn a provider outage into a failed
-    // message.
     logger.error({ err: error, provider: provider.name }, 'moderation check failed — failing open');
 
     return {
@@ -102,22 +72,13 @@ export interface CheckInput {
 export interface CheckView {
   check_id: string;
   severity: ModerationSeverity;
-  /** spec §5.4: the client renders "Edit message" / "Send anyway" from this. */
   should_warn: boolean;
-  /** Always true. The check never refuses a send — it is advisory (spec §5.4). */
   can_send: boolean;
   findings: ModerationFinding[];
-  /** True when the provider was unreachable and the content was let through. */
   timed_out: boolean;
   provider: string;
 }
 
-/**
- * The pre-send check (spec §5.4).
- *
- * A separate endpoint rather than part of the send, so the client can show the
- * warning dialog before committing to anything.
- */
 export async function check(input: CheckInput): Promise<CheckView> {
   const result = await withTimeout(input.content);
 
@@ -137,8 +98,6 @@ export async function check(input: CheckInput): Promise<CheckView> {
     select: { id: true },
   });
 
-  // Queued even when the user never sends: content bad enough to reach this
-  // threshold is worth a look regardless of what they did next.
   if (severityAtLeast(result.severity, FLAG_THRESHOLD)) {
     await raiseFlag({
       subjectType: input.subjectType,
@@ -148,8 +107,6 @@ export async function check(input: CheckInput): Promise<CheckView> {
     });
   }
 
-  // A provider outage means nothing was actually checked. Queue it so the gap
-  // is visible rather than silently trusted.
   if (result.timed_out && input.subjectId) {
     await raiseFlag({
       subjectType: input.subjectType,
@@ -163,9 +120,6 @@ export async function check(input: CheckInput): Promise<CheckView> {
     check_id: record.id,
     severity: result.severity,
     should_warn: severityAtLeast(result.severity, WARN_THRESHOLD),
-    // spec §5.4: advisory, not blocking. This is a constant, and it is a
-    // constant deliberately — the day it becomes conditional, the product has
-    // started blocking messages on a rules engine.
     can_send: true,
     findings: result.findings,
     timed_out: result.timed_out,
@@ -191,16 +145,6 @@ export interface RaiseFlagInput {
   severity: ModerationSeverity;
 }
 
-/**
- * Adds to the moderation team's queue.
- *
- * Distinct from a Report: reports come from users, flags come from the system.
- * Keeping them apart matters because they need different triage — a report has
- * a human behind it who is waiting for an outcome.
- *
- * Idempotent per open flag on a subject, so a message scanned twice does not
- * produce two identical items in the queue.
- */
 export async function raiseFlag(input: RaiseFlagInput): Promise<void> {
   const existing = await prisma.moderationFlag.findFirst({
     where: {
@@ -241,13 +185,6 @@ export async function raiseFlag(input: RaiseFlagInput): Promise<void> {
   );
 }
 
-/**
- * Post-hoc scan of content that is already live (spec §7, Batch 10).
- *
- * Runs after the fact, on a queue, for everything the pre-send check cannot
- * cover: media the provider cannot read, content written before this batch
- * existed, and messages sent while the provider was down.
- */
 export async function scanSubject(options: {
   userId: string;
   subjectType: string;

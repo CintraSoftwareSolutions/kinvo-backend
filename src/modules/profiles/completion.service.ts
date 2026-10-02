@@ -3,15 +3,6 @@ import { getProfileCoordinates } from '@/db/geo';
 import { ApiError } from '@utils/api-error';
 import type { CompletionCriterion, ProfileCompletion } from './profiles.types';
 
-/**
- * Profile completion scoring.
- *
- * Its own module so that anything changing a scored field can recompute the
- * total. Photos are scored, and photos.service cannot import profiles.service
- * (that service imports photos for the primary photo URL) — putting the scoring
- * here means both can call it without closing an import cycle.
- */
-
 export interface CompletionInput {
   photo_count: number;
   bio: string | null;
@@ -24,13 +15,6 @@ export interface CompletionInput {
   prompt_count: number;
 }
 
-/**
- * A weighted checklist rather than scattered conditionals.
- *
- * The percentage is normalised over whatever criteria exist, so adding one —
- * as Batch 4 did with photos — re-weights the rest automatically instead of
- * capping the achievable total below 100.
- */
 function buildCriteria(input: CompletionInput): CompletionCriterion[] {
   return [
     { key: 'photos', label: 'Add a photo', weight: 25, is_met: input.photo_count >= 1 },
@@ -84,7 +68,6 @@ export function scoreCompletion(input: CompletionInput): ProfileCompletion {
   };
 }
 
-/** The profile columns completion is scored on. */
 export interface ScoredProfileFields {
   bio: string | null;
   job_title: string | null;
@@ -109,7 +92,6 @@ function countLifestyle(profile: ScoredProfileFields): number {
   ].filter((value) => value !== null && value !== undefined).length;
 }
 
-/** Scores a profile whose fields and counts the caller already has. */
 export function completionOf(
   profile: ScoredProfileFields,
   counts: { photos: number; interests: number; prompts: number; has_location: boolean },
@@ -127,10 +109,6 @@ export function completionOf(
   });
 }
 
-/**
- * What is left to reach 100%, the criteria worth most first, so the app can
- * say what to do next rather than only show a number.
- */
 export function missingSteps(completion: ProfileCompletion): { key: string; label: string }[] {
   return completion.criteria
     .filter((criterion) => !criterion.is_met)
@@ -138,16 +116,6 @@ export function missingSteps(completion: ProfileCompletion): { key: string; labe
     .map(({ key, label }) => ({ key, label }));
 }
 
-/**
- * Recomputes and persists the completion percentage.
- *
- * Stored rather than computed on read because Batch 7's deck ranking sorts on
- * it, and a per-row computation there would be a sequential scan.
- *
- * **Every write that changes a scored field must call this** — including adding
- * or removing a photo, which is exactly the case that was missed first time and
- * left the stored value stale.
- */
 export async function refreshCompletion(userId: string): Promise<number> {
   const profile = await prisma.profile.findUnique({
     where: { user_id: userId },
@@ -192,7 +160,6 @@ export async function refreshCompletion(userId: string): Promise<number> {
   return percentage;
 }
 
-/** The facts the onboarding checklist needs, without loading a whole profile. */
 export async function getProfileFacts(userId: string): Promise<{
   has_profile: boolean;
   has_bio: boolean;

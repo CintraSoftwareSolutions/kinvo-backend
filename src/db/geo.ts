@@ -1,25 +1,5 @@
 import { Prisma, prisma } from '@/db/prisma';
 
-/**
- * PostGIS access.
- *
- * Prisma cannot read or write a `geography` column — the fields are declared
- * Unsupported() in the schema — so every spatial operation lives here, in raw
- * SQL. Spec §0.5 permits raw SQL exactly for geospatial queries Prisma cannot
- * express, and confining it to one module keeps the rest of the codebase
- * free of hand-written SQL.
- *
- * Two rules for everything below:
- *
- *  1. **Coordinate order is (longitude, latitude).** `ST_MakePoint` takes X
- *     then Y, which is longitude then latitude — the reverse of how humans say
- *     it. Getting this backwards silently puts London in Antarctica.
- *  2. **Distances are metres** (spec §4.6). The `geography` type returns metres
- *     from `ST_Distance` and accepts metres in `ST_DWithin`. Never convert here;
- *     the client formats to miles.
- */
-
-/** WGS-84, the coordinate system GPS reports in. */
 export const SRID = 4326;
 
 export interface Coordinates {
@@ -47,10 +27,6 @@ function assertValidCoordinates({ longitude, latitude }: Coordinates): void {
   }
 }
 
-/**
- * A `geography(Point, 4326)` literal, parameterised. Never interpolate
- * coordinates into SQL text directly.
- */
 function point({ longitude, latitude }: Coordinates): Prisma.Sql {
   return Prisma.sql`ST_SetSRID(ST_MakePoint(${longitude}::double precision, ${latitude}::double precision), ${SRID})::geography`;
 }
@@ -106,10 +82,6 @@ export async function getProfileCoordinates(profileId: string): Promise<Coordina
   return rows[0] ?? null;
 }
 
-/**
- * Great-circle distance in metres between two profiles, or null if either has
- * no location set.
- */
 export async function distanceBetweenProfiles(
   profileIdA: string,
   profileIdB: string,
@@ -131,18 +103,6 @@ export async function distanceBetweenProfiles(
 // Radius search
 // ---------------------------------------------------------------------------
 
-/**
- * Profiles within `radiusMetres` of a point, nearest first.
- *
- * `ST_DWithin` is the indexed operator — it uses the GIST index on
- * `profiles.location`. `ST_Distance` in the SELECT and ORDER BY does not use
- * the index, which is why the filter must be `ST_DWithin` and not a comparison
- * against `ST_Distance`.
- *
- * This is the geospatial half of the deck query only. It applies no block,
- * mode, age, or already-swiped filtering — Batch 7 composes those into the
- * shared exclusion clause (spec §5.5). Do not use this directly as a deck.
- */
 export async function findProfilesWithinRadius(
   centre: Coordinates,
   radiusMetres: number,
@@ -174,11 +134,6 @@ export async function findProfilesWithinRadius(
     LIMIT ${limit}
   `;
 }
-
-/**
- * Venues within a radius, nearest first (spec §5.9: sorted by distance,
- * filterable by category).
- */
 export async function findVenuesWithinRadius(
   centre: Coordinates,
   radiusMetres: number,
@@ -214,13 +169,7 @@ export async function findVenuesWithinRadius(
 // Live location (spec §5.7, Batch 12)
 // ---------------------------------------------------------------------------
 
-/**
- * Records a position on an active sharing session.
- *
- * spec §5.7 calls live location high-risk data and asks for no historical trail
- * beyond the immediate safety need. The retention rule is enforced by
- * `pruneExpiredLiveLocations` below, not by the client choosing to stop sending.
- */
+
 export async function recordLocationPing(
   sessionId: string,
   coordinates: Coordinates,
@@ -247,7 +196,6 @@ export interface LocationPing {
   recorded_at: Date;
 }
 
-/** The most recent positions on a session, newest first. */
 export async function readLocationPings(sessionId: string, limit = 50): Promise<LocationPing[]> {
   return prisma.$queryRaw<LocationPing[]>`
     SELECT ST_Y(location::geometry) AS latitude,
@@ -262,14 +210,6 @@ export async function readLocationPings(sessionId: string, limit = 50): Promise<
   `;
 }
 
-/**
- * Deletes the position trail of sessions that have ended or lapsed.
- *
- * The session row survives — it is the audit record that sharing happened, and
- * a safety investigation needs to know that. The POSITIONS do not: spec §5.7
- * says retain no historical trail beyond the immediate need, and a stored
- * movement history is the single most damaging thing this database could leak.
- */
 export async function pruneExpiredLiveLocations(now: Date = new Date()): Promise<number> {
   const result = await prisma.$executeRaw`
     DELETE FROM live_location_pings
@@ -282,7 +222,6 @@ export async function pruneExpiredLiveLocations(now: Date = new Date()): Promise
   return result;
 }
 
-/** Emergency events carry a position so responders know where to look. */
 export async function setEmergencyLocation(
   eventId: string,
   coordinates: Coordinates,

@@ -18,17 +18,6 @@ import {
   verificationIdParamSchema,
 } from './media.schema';
 
-/**
- * Media and verification routes (spec §7, Batch 4).
- *
- * Everything here is authenticated and scoped to the caller. There is
- * deliberately no route that takes another user's id — media belonging to
- * someone else is only ever reached through their profile, which applies the
- * shared block clause first.
- *
- * `requireOnboarded` is NOT mounted: uploading a photo is part of onboarding,
- * so gating it behind a completed onboarding would deadlock the flow.
- */
 export const mediaRouter: Router = Router();
 
 mediaRouter.use(authenticate);
@@ -110,17 +99,6 @@ verificationRouter.post(
   asyncHandler(controller.submitVerification),
 );
 
-/**
- * Verification review (Batch 15).
- *
- * The admin PANEL is a separate codebase; these are the endpoints it calls.
- * Role-gated rather than answering the block-style 404, matching
- * `/reports/review` — a moderator surface is not something to hide from the
- * person holding the role, and the role check is the honest refusal.
- *
- * Mounted BEFORE `/:id` routes would be, so `review` is never parsed as a
- * verification id.
- */
 verificationRouter.get(
   '/review',
   requireRole('moderator', 'admin'),
