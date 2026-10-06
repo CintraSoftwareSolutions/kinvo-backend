@@ -100,7 +100,7 @@ export const envSchema = z.object({
     ),
 
   // --- Media storage (Batch 4) --------------------------------------------
-  
+
   S3_REGION: z.string().min(1).default('us-east-1'),
   S3_ENDPOINT: z.string().url().optional(),
   S3_FORCE_PATH_STYLE: z

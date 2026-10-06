@@ -4,7 +4,6 @@ import {
   UNLIMITED,
 } from '@modules/entitlements/entitlements.types';
 
-
 type Line = (plan: EntitlementMap, free: EntitlementMap) => string | null;
 
 function limit(key: EntitlementKey, unlimited: string, counted: (value: number) => string): Line {

@@ -5,7 +5,6 @@ import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 import { blockUser } from './blocks.service';
 
-
 export interface CreateReportInput {
   reporterId: string;
   reportedId: string;

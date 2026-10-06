@@ -30,8 +30,6 @@ import {
   verifyAccessToken,
 } from './token.service';
 
-
-
 function deviceIdFor(req: Request, bodyDeviceId: string | undefined): string | undefined {
   return bodyDeviceId ?? req.get(CLIENT_HEADERS.DEVICE_ID) ?? undefined;
 }

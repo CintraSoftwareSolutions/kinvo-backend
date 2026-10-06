@@ -13,7 +13,6 @@ import type {
 } from './users.schema';
 import * as users from './users.service';
 
-
 export async function getMe(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   sendSuccess(res, { ...(await profiles.getOwnProfile(user.id)) });

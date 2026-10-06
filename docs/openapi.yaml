@@ -9782,6 +9782,1199 @@ paths:
                   code: INTERNAL_ERROR
                   message: Something went wrong on our end.
                   details: null
+  /api/v1/admin/me:
+    get:
+      tags:
+        - Admin
+      summary: Who am I and what may I do
+      description: "The panel calls this first and hides the screens the answer omits.
+        That is PRESENTATION ONLY — every endpoint checks for itself, because a
+        client deciding its own permissions is the same mistake as a client
+        deciding its own entitlement. Needs no permission of its own: requiring
+        one to discover your permissions is a loop."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/roles:
+    get:
+      tags:
+        - Admin
+      summary: List roles
+      description: "Each row carries `admins` (how many staff hold it) and `rights`
+        (how many permissions it allows), which are the two columns the panel
+        renders. Two gates, in order: the account must be staff (`moderator` or
+        `admin`), then it must hold the permission. `role: admin` means every
+        permission without consulting the tables, so an administrator cannot be
+        locked out by a row somebody edited."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+    post:
+      tags:
+        - Admin
+      summary: Create a role
+      description: Every permission is created DENIED rather than left absent, so the
+        matrix renders complete from the first load instead of a new role
+        showing fewer rows than the others.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key:
+                  type: string
+                  minLength: 2
+                  maxLength: 64
+                  pattern: ^[a-z][a-z0-9_]*$
+                title:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                description:
+                  type: string
+                  maxLength: 500
+              required:
+                - key
+                - title
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "409":
+          description: CONFLICT — That already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: CONFLICT
+                  message: That already exists.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/roles/{id}:
+    patch:
+      tags:
+        - Admin
+      summary: Rename a role
+      description: Title and description only. The `key` is what code matches on and
+        never changes.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                description:
+                  type: string
+                  maxLength: 500
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+    delete:
+      tags:
+        - Admin
+      summary: Delete a role
+      description: Refused for a built-in role, and refused while anybody still holds
+        it — cascading would strip access from everyone at once and the first
+        they would know is a 403 mid-task.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "409":
+          description: CONFLICT — That already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: CONFLICT
+                  message: That already exists.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/roles/{id}/permissions:
+    get:
+      tags:
+        - Admin
+      summary: The permission matrix for one role
+      description: Every permission in the catalogue, each with `allowed`. A missing
+        row reads as NOT allowed — absence-as-denial, so a permission added
+        later is off everywhere until somebody turns it on.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+    put:
+      tags:
+        - Admin
+      summary: Save the matrix
+      description: Takes the WHOLE set of changes in one request, applied in one
+        transaction. A per-cell endpoint would turn one save into fifteen
+        requests, any of which could fail and leave a role with access somebody
+        has already decided it should not have. An unknown key is refused rather
+        than ignored.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permissions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      key:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                      allowed:
+                        type: boolean
+                    required:
+                      - key
+                      - allowed
+                    additionalProperties: false
+                  minItems: 1
+                  maxItems: 100
+              required:
+                - permissions
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/roles/{id}/members:
+    get:
+      tags:
+        - Admin
+      summary: Who holds this role
+      description: Compact user objects plus when it was granted.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+    post:
+      tags:
+        - Admin
+      summary: Grant a role
+      description: Refused for an account whose `role` is `user`. A permission role
+        NARROWS what a staff member may do; it never makes somebody staff —
+        otherwise assigning a role would be a privilege-escalation path, because
+        the gate would be a table every admin can write to. Idempotent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+              required:
+                - user_id
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "409":
+          description: CONFLICT — That already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: CONFLICT
+                  message: That already exists.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/roles/{id}/members/{userId}:
+    delete:
+      tags:
+        - Admin
+      summary: Remove a role
+      description: Removes the granular role. The account keeps its staff `role` —
+        this is not how somebody is removed from staff.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/guardrails:
+    get:
+      tags:
+        - Admin
+      summary: Operational switches
+      description: A guardrail exists only once an endpoint reads it. A switch
+        labelled "read-only mode" that does not actually stop writes is worse
+        than no switch, because somebody will flip it during an incident and
+        believe the system is frozen.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/guardrails/{key}:
+    patch:
+      tags:
+        - Admin
+      summary: Flip a guardrail
+      description: "Deliberately NOT frozen by read-only mode: that mode is itself a
+        guardrail, so freezing this route would leave the panel stuck with no
+        way back short of a database edit."
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required:
+                - enabled
+              additionalProperties: false
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "404":
+          description: NOT_FOUND — We could not find what you were looking for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: NOT_FOUND
+                  message: We could not find what you were looking for.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
+  /api/v1/admin/audit-log:
+    get:
+      tags:
+        - Admin
+      summary: What staff have done
+      description: Newest first, cursor paginated. Filter by `actor_id`,
+        `target_type`, `target_id` or `action` — the two questions anybody
+        actually asks are "what did this admin do" and "who touched this
+        account". Every admin mutation writes an entry with the actor, the
+        target and the caller IP.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
   /api/v1/me/entitlements:
     get:
       tags:

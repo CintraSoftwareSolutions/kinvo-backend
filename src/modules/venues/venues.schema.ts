@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { Mode, VenueCategory } from '@/db/prisma';
 
-
 export const searchVenuesQuerySchema = z
   .object({
     category: z.nativeEnum(VenueCategory).optional(),

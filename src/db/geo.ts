@@ -169,7 +169,6 @@ export async function findVenuesWithinRadius(
 // Live location (spec §5.7, Batch 12)
 // ---------------------------------------------------------------------------
 
-
 export async function recordLocationPing(
   sessionId: string,
   coordinates: Coordinates,

@@ -11,7 +11,6 @@ import type {
   UpdatePreferenceBody,
 } from './notifications.schema';
 
-
 export async function listNotifications(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const { limit, cursor, unread_only } = req.query as unknown as ListQuery;

@@ -553,7 +553,7 @@ export async function markRead(viewerId: string, conversationId: string): Promis
         data: { path: ['conversation_id'], equals: conversationId },
       },
       data: { read_at: now },
-    }),  
+    }),
     prisma.message.updateMany({
       where: {
         conversation_id: conversationId,

@@ -6,7 +6,6 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { assertAdult } from '@utils/age';
 import { logger } from '@utils/logger';
 
-
 export interface OnboardingStep {
   key: string;
   label: string;

@@ -13,6 +13,7 @@ import { mediaRouter, verificationRouter } from '@modules/media/media.routes';
 import { moderationRouter } from '@modules/moderation/moderation.routes';
 import { notificationsRouter } from '@modules/notifications/notifications.routes';
 import { plansRouter } from '@modules/plans/plans.routes';
+import { adminRouter } from '@modules/admin/admin.routes';
 import { callsRouter, callsWebhookRouter } from '@modules/calls/calls.routes';
 import { subscriptionsRouter } from '@modules/subscriptions/subscriptions.routes';
 import { blocksRouter, reportsRouter, safetyRouter } from '@modules/safety/safety.routes';
@@ -48,6 +49,10 @@ apiRouter.use('/plans', plansRouter);
 apiRouter.use('/venues', venuesRouter);
 apiRouter.use('/subscriptions', subscriptionsRouter);
 apiRouter.use('/calls', callsRouter);
+
+// The admin panel's surface, mounted under one prefix. Everything that existed
+// before this stays exactly where it was — the app's contract is unchanged.
+apiRouter.use('/admin', adminRouter);
 
 apiRouter.use('/webhooks', callsWebhookRouter);
 apiRouter.use('/settings', settingsRouter);

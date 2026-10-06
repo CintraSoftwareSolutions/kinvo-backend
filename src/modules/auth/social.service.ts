@@ -64,7 +64,6 @@ async function resolveIdentity(
     }
   }
 
-
   const user = await prisma.user.create({
     data: {
       display_name: fallbackDisplayName(identity, requestedDisplayName),

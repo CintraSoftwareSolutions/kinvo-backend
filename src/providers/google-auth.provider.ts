@@ -5,7 +5,6 @@ import { ApiError } from '@utils/api-error';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 
-
 export interface SocialIdentity {
   subject: string;
   email: string | null;

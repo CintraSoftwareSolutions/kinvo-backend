@@ -3,7 +3,6 @@ import { Redis } from 'ioredis';
 import { env, isProduction, isTest } from '@config/env';
 import { logger } from '@utils/logger';
 
-
 function createClient(): Redis {
   const client = new Redis(env.REDIS_URL, {
     // Fail fast rather than queueing commands forever behind a dead server.

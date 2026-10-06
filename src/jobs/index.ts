@@ -10,7 +10,6 @@ import {
   stopDeckWorker,
 } from './deck.worker';
 
-
 let scheduler: Queue | null = null;
 
 const DAILY_DECK_CRON = '10 0 * * *';

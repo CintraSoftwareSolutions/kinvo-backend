@@ -31,7 +31,8 @@
     "postinstall": "prisma generate",
     "docs:export": "tsx scripts/export-docs.ts",
     "loadtest": "tsx tests/load/deck-load.ts",
-    "loadtest:seed": "tsx tests/load/seed-population.ts"
+    "loadtest:seed": "tsx tests/load/seed-population.ts",
+    "verify:contract": "tsx scripts/verify-app-contract.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1114.0",

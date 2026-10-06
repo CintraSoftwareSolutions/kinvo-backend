@@ -18,7 +18,6 @@ import { otherParticipantId } from './participants';
 import { deviceRoom, userRoom } from './rooms';
 import { authenticateSocket } from './socket.auth';
 
-
 let io: Server | null = null;
 
 export function createSocketServer(httpServer: HttpServer): Server {
@@ -108,7 +107,6 @@ async function onConnection(socket: Socket): Promise<void> {
     logger.debug({ user_id: user.id, socket_id: socket.id }, 'socket connected');
   }
 }
-
 
 function handle<TEvent extends keyof typeof CLIENT_EVENT_SCHEMAS>(
   socket: Socket,

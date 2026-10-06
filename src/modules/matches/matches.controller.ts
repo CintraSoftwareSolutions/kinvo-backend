@@ -5,7 +5,6 @@ import { sendList, sendSuccess } from '@utils/response';
 import * as matchesService from './matches.service';
 import type { ListMatchesQuery } from './matches.schema';
 
-
 export async function listMatches(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const { limit, cursor, archived, mode } = req.query as unknown as ListMatchesQuery;

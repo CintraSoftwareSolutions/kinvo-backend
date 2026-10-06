@@ -7,7 +7,6 @@ import { decodeCursor, paginate } from '@utils/cursor';
 import { logger } from '@utils/logger';
 import { getEmailProvider, getPushProvider } from './providers';
 
-
 export interface NotificationView {
   id: string;
   category: NotificationCategory;

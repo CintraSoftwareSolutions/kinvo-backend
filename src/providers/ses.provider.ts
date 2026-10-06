@@ -12,7 +12,6 @@ import {
   type EmailProvider,
 } from './email.provider';
 
-
 export interface SesConfig {
   region: string;
   from: string;
@@ -22,7 +21,6 @@ export interface SesConfig {
 const RECIPIENT_FAILURES = new Set(['MessageRejected', 'BadRequestException']);
 
 export function classifySesFailure(error: unknown): EmailFailure {
-
   const name = (error as { name?: string } | null | undefined)?.name ?? 'unknown';
 
   if (RECIPIENT_FAILURES.has(name)) return emailRejected(name);

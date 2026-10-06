@@ -11,7 +11,6 @@ import { type CursorPayload, decodeCursor, paginate } from '@utils/cursor';
 import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 
-
 export interface DeckCard {
   entry_id: string;
   position: number;

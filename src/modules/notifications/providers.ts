@@ -9,7 +9,6 @@ import {
 import { SesEmailProvider } from '@/providers/ses.provider';
 import { logger } from '@utils/logger';
 
-
 let push: PushProvider | null = null;
 let email: EmailProvider | null = null;
 

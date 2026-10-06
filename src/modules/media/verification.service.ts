@@ -259,7 +259,6 @@ export async function reviewVerification(options: {
 // Review side (admin / moderator)
 // ---------------------------------------------------------------------------
 
-
 export interface VerificationReviewItem {
   id: string;
   status: VerificationStatus;

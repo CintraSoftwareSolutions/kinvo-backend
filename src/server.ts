@@ -79,7 +79,6 @@ function shutdown(signal: string): void {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-
 process.on('unhandledRejection', (reason) => {
   logger.fatal({ err: reason }, 'unhandled promise rejection');
   process.exit(1);

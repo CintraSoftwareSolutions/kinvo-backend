@@ -32,6 +32,13 @@ import {
 import { safetyActionSchema, startCallSchema } from '@modules/calls/calls.schema';
 import { testPurchaseSchema } from '@modules/subscriptions/subscriptions.schema';
 import { reviewDecisionSchema } from '@modules/media/media.schema';
+import {
+  addRoleMemberSchema,
+  createRoleSchema,
+  setGuardrailSchema,
+  setPermissionsSchema,
+  updateRoleSchema,
+} from '@modules/admin/admin.schema';
 import * as settingsSchema from '@modules/settings/settings.schema';
 import * as usersSchema from '@modules/users/users.schema';
 
@@ -1246,6 +1253,140 @@ export const ROUTES: RouteDoc[] = [
     description:
       '**Not for clients.** The video provider (LiveKit) posts room lifecycle events here; the `Authorization` header carries a JWT holding a hash of the RAW body, and that is the authentication — there is no bearer token. Answers **403** to a missing or invalid signature so the provider flags the endpoint rather than retrying a forgery. This is what closes a call when the room ends without either app sending a hang-up — otherwise a call whose participants both vanish stays `active` forever. Idempotent: ending an already-ended call is a no-op, so retries cost nothing. It cannot touch entitlement, and a test asserts so.',
     auth: false,
+    errors: [E.FORBIDDEN],
+  },
+  // --- admin: roles, permissions, guardrails, audit ------------------------
+  {
+    method: 'get',
+    path: '/admin/me',
+    tag: 'Admin',
+    summary: 'Who am I and what may I do',
+    description:
+      'The panel calls this first and hides the screens the answer omits. That is PRESENTATION ONLY — every endpoint checks for itself, because a client deciding its own permissions is the same mistake as a client deciding its own entitlement. Needs no permission of its own: requiring one to discover your permissions is a loop.',
+    auth: true,
+    errors: [E.FORBIDDEN],
+  },
+  {
+    method: 'get',
+    path: '/admin/roles',
+    tag: 'Admin',
+    summary: 'List roles',
+    description:
+      'Each row carries `admins` (how many staff hold it) and `rights` (how many permissions it allows), which are the two columns the panel renders. Two gates, in order: the account must be staff (`moderator` or `admin`), then it must hold the permission. `role: admin` means every permission without consulting the tables, so an administrator cannot be locked out by a row somebody edited.',
+    auth: true,
+    errors: [E.FORBIDDEN],
+  },
+  {
+    method: 'post',
+    path: '/admin/roles',
+    tag: 'Admin',
+    summary: 'Create a role',
+    description:
+      'Every permission is created DENIED rather than left absent, so the matrix renders complete from the first load instead of a new role showing fewer rows than the others.',
+    body: createRoleSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.CONFLICT, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'patch',
+    path: '/admin/roles/{id}',
+    tag: 'Admin',
+    summary: 'Rename a role',
+    description: 'Title and description only. The `key` is what code matches on and never changes.',
+    body: updateRoleSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'delete',
+    path: '/admin/roles/{id}',
+    tag: 'Admin',
+    summary: 'Delete a role',
+    description:
+      'Refused for a built-in role, and refused while anybody still holds it — cascading would strip access from everyone at once and the first they would know is a 403 mid-task.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT],
+  },
+  {
+    method: 'get',
+    path: '/admin/roles/{id}/permissions',
+    tag: 'Admin',
+    summary: 'The permission matrix for one role',
+    description:
+      'Every permission in the catalogue, each with `allowed`. A missing row reads as NOT allowed — absence-as-denial, so a permission added later is off everywhere until somebody turns it on.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND],
+  },
+  {
+    method: 'put',
+    path: '/admin/roles/{id}/permissions',
+    tag: 'Admin',
+    summary: 'Save the matrix',
+    description:
+      'Takes the WHOLE set of changes in one request, applied in one transaction. A per-cell endpoint would turn one save into fifteen requests, any of which could fail and leave a role with access somebody has already decided it should not have. An unknown key is refused rather than ignored.',
+    body: setPermissionsSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/roles/{id}/members',
+    tag: 'Admin',
+    summary: 'Who holds this role',
+    description: 'Compact user objects plus when it was granted.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND],
+  },
+  {
+    method: 'post',
+    path: '/admin/roles/{id}/members',
+    tag: 'Admin',
+    summary: 'Grant a role',
+    description:
+      'Refused for an account whose `role` is `user`. A permission role NARROWS what a staff member may do; it never makes somebody staff — otherwise assigning a role would be a privilege-escalation path, because the gate would be a table every admin can write to. Idempotent.',
+    body: addRoleMemberSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT],
+  },
+  {
+    method: 'delete',
+    path: '/admin/roles/{id}/members/{userId}',
+    tag: 'Admin',
+    summary: 'Remove a role',
+    description:
+      'Removes the granular role. The account keeps its staff `role` — this is not how somebody is removed from staff.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND],
+  },
+  {
+    method: 'get',
+    path: '/admin/guardrails',
+    tag: 'Admin',
+    summary: 'Operational switches',
+    description:
+      'A guardrail exists only once an endpoint reads it. A switch labelled "read-only mode" that does not actually stop writes is worse than no switch, because somebody will flip it during an incident and believe the system is frozen.',
+    auth: true,
+    errors: [E.FORBIDDEN],
+  },
+  {
+    method: 'patch',
+    path: '/admin/guardrails/{key}',
+    tag: 'Admin',
+    summary: 'Flip a guardrail',
+    description:
+      'Deliberately NOT frozen by read-only mode: that mode is itself a guardrail, so freezing this route would leave the panel stuck with no way back short of a database edit.',
+    body: setGuardrailSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/audit-log',
+    tag: 'Admin',
+    summary: 'What staff have done',
+    description:
+      'Newest first, cursor paginated. Filter by `actor_id`, `target_type`, `target_id` or `action` — the two questions anybody actually asks are "what did this admin do" and "who touched this account". Every admin mutation writes an entry with the actor, the target and the caller IP.',
+    auth: true,
     errors: [E.FORBIDDEN],
   },
   // --- entitlements -------------------------------------------------------

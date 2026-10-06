@@ -1,4 +1,5 @@
 import { disconnectDatabase, prisma } from '@/db/prisma';
+import { seedAdminRbac } from './seeds/admin-rbac';
 import { seedCatalogues } from './seeds/catalogues';
 import { seedConnections } from './seeds/connections';
 import { seedEntitlements } from './seeds/entitlements';
@@ -27,6 +28,15 @@ async function main(): Promise<void> {
 
   const catalogues = await seedCatalogues();
   console.log(`  catalogues     ${catalogues.interests} interests, ${catalogues.prompts} prompts`);
+
+  // Before anything user-facing: the permission catalogue is referenced by
+  // code, not by data, so nothing else depends on it — but a panel that loads
+  // against a half-seeded database shows an empty matrix, which reads as
+  // "nobody can do anything" rather than "not seeded yet".
+  const rbac = await seedAdminRbac();
+  console.log(
+    `  admin rbac     ${rbac.permissions} permissions, ${rbac.roles} roles, ${rbac.guardrails} guardrails`,
+  );
 
   const entitlements = await seedEntitlements();
   console.log(

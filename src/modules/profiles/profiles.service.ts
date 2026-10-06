@@ -22,12 +22,10 @@ import type {
   PublicProfile,
 } from './profiles.types';
 
-
 const FULL_PROFILE_INCLUDE = {
   interests: { include: { interest: true } },
   answers: { include: { question: true }, orderBy: { position: 'asc' } },
 } as const;
-
 
 export { getProfileFacts, refreshCompletion, scoreCompletion };
 
@@ -279,7 +277,6 @@ export async function updateLocation(
 }
 
 export const MAX_INTERESTS = 10;
-
 
 export async function setInterests(userId: string, slugs: string[]): Promise<OwnProfile> {
   const profileId = await ensureProfile(userId);

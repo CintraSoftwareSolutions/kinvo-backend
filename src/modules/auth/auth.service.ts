@@ -155,7 +155,6 @@ export async function requestPasswordReset(rawEmail: string): Promise<PasswordRe
   const email = normaliseEmail(rawEmail);
   const transport = getEmailProvider();
 
- 
   assertEmailTransportUsable(transport);
 
   const identity = await prisma.authIdentity.findUnique({
@@ -207,7 +206,6 @@ export async function resetPassword(
     data: { password_hash: await hashPassword(newPassword) },
   });
 
- 
   await revokeAllTokensForUser(identity.user.id);
   await signOutAllDevices(identity.user.id);
 

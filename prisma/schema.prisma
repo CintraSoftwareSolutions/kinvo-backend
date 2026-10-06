@@ -451,6 +451,9 @@ model User {
   media_assets           MediaAsset[]
   verifications          Verification[]           @relation("VerificationSubject")
   verifications_reviewed Verification[]           @relation("VerificationReviewer")
+  admin_roles            AdminRoleMember[]        @relation("AdminRoleHolder")
+  admin_roles_granted    AdminRoleMember[]        @relation("AdminRoleGranter")
+  guardrails_updated     AdminGuardrail[]         @relation("GuardrailEditor")
   user_modes             UserMode[]
   swipes_made            Swipe[]                  @relation("SwipeActor")
   swipes_received        Swipe[]                  @relation("SwipeTarget")
@@ -1739,6 +1742,129 @@ model ModerationFlag {
 // ============================================================================
 // ADMIN  (spec §7, Batch 15)
 // ============================================================================
+
+/// Granular admin roles (Batch 15 — admin panel).
+///
+/// These sit ON TOP of `User.role` and never replace it. That enum stays the
+/// coarse gate — is this person staff at all — and every endpoint already using
+/// `requireRole` is untouched. The app's contract cannot move because of
+/// anything in this section: it is all new tables.
+///
+/// The division matters for a reason beyond compatibility. A granular role
+/// NARROWS what a staff member may do; it must never be able to GRANT staff
+/// status. Otherwise assigning somebody a role would be a privilege-escalation
+/// path, and the gate would be a table any admin can write to.
+model AdminRole {
+  id String @id @default(uuid(4)) @db.Uuid
+
+  /// Stable machine key. The panel shows `title`; code and seeds match on this.
+  key         String  @unique @db.VarChar(64)
+  title       String  @db.VarChar(100)
+  description String? @db.VarChar(500)
+
+  /// Seeded roles cannot be deleted. Removing "Administrator" while somebody
+  /// is relying on it is not a mistake worth leaving available.
+  is_system Boolean @default(false)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  permissions AdminRolePermission[]
+  members     AdminRoleMember[]
+
+  @@map("admin_roles")
+}
+
+/// The catalogue of things a staff member can be allowed to do.
+///
+/// Seeded from code rather than created through the API: a permission that no
+/// endpoint checks is a row that promises something nothing enforces, and the
+/// panel would render a toggle with no effect.
+model AdminPermission {
+  id String @id @default(uuid(4)) @db.Uuid
+
+  /// Dotted and checked verbatim by `requirePermission`, e.g. "users.suspend".
+  key         String  @unique @db.VarChar(64)
+  title       String  @db.VarChar(100)
+  description String? @db.VarChar(500)
+  /// Groups the matrix into sections in the panel.
+  category    String  @db.VarChar(32)
+
+  created_at DateTime @default(now())
+
+  roles AdminRolePermission[]
+
+  @@index([category])
+  @@map("admin_permissions")
+}
+
+/// One cell of the permission matrix.
+///
+/// A missing row means NOT allowed. Absence-as-denial is the safe default: a
+/// permission added to the catalogue later is off for every existing role until
+/// somebody turns it on, rather than silently granted to all of them.
+model AdminRolePermission {
+  id String @id @default(uuid(4)) @db.Uuid
+
+  role_id       String @db.Uuid
+  permission_id String @db.Uuid
+
+  allowed Boolean @default(false)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  role       AdminRole       @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  permission AdminPermission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+
+  @@unique([role_id, permission_id])
+  @@map("admin_role_permissions")
+}
+
+/// Which staff member holds which granular role.
+model AdminRoleMember {
+  id String @id @default(uuid(4)) @db.Uuid
+
+  user_id String @db.Uuid
+  role_id String @db.Uuid
+
+  /// Who granted it. Null when seeded rather than granted by a person.
+  granted_by_id String? @db.Uuid
+
+  created_at DateTime @default(now())
+
+  user       User      @relation("AdminRoleHolder", fields: [user_id], references: [id], onDelete: Cascade)
+  role       AdminRole @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  granted_by User?     @relation("AdminRoleGranter", fields: [granted_by_id], references: [id], onDelete: SetNull)
+
+  @@unique([user_id, role_id])
+  @@index([role_id])
+  @@map("admin_role_members")
+}
+
+/// Operational safety switches the panel toggles.
+///
+/// Deliberately a table rather than environment variables: these are changed by
+/// a person during an incident, and an env change is a deploy. Each one is read
+/// by the endpoint it constrains, so a guardrail with no reader is a bug rather
+/// than a harmless row — same rule as the permission catalogue.
+model AdminGuardrail {
+  id String @id @default(uuid(4)) @db.Uuid
+
+  key         String  @unique @db.VarChar(64)
+  title       String  @db.VarChar(100)
+  description String? @db.VarChar(500)
+
+  enabled Boolean @default(false)
+
+  updated_by_id String?  @db.Uuid
+  updated_at    DateTime @updatedAt
+  created_at    DateTime @default(now())
+
+  updated_by User? @relation("GuardrailEditor", fields: [updated_by_id], references: [id], onDelete: SetNull)
+
+  @@map("admin_guardrails")
+}
 
 /// Audit log for every admin action — who did what to whom, when.
 model AdminAuditLog {

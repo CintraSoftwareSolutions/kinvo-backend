@@ -141,7 +141,6 @@ export async function consumeQuota(
   };
 }
 
-
 export async function refundQuota(userId: string, quota: QuotaName, cost = 1): Promise<void> {
   try {
     const key = quotaKey(userId, quota);

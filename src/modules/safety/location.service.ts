@@ -15,7 +15,6 @@ import { logger } from '@utils/logger';
 import { type ContactAlert, countEmailed, emailContacts, emergencySummary } from './contact-alerts';
 import { type PlanForContact, emergencyAlertEmail, safetyTeamEmail } from './safety.emails';
 
-
 const MAX_DURATION_MINUTES = 8 * 60;
 const DEFAULT_DURATION_MINUTES = 3 * 60;
 

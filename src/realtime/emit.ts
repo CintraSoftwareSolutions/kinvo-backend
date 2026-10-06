@@ -14,7 +14,6 @@ import {
 import { onlineStatusFor } from './presence';
 import { conversationRoom, deviceRoom, userRoom } from './rooms';
 
-
 let io: Server | null = null;
 
 export function registerSocketServer(server: Server | null): void {

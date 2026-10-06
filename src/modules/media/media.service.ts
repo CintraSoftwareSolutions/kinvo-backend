@@ -14,7 +14,6 @@ import { ERROR_CODES } from '@utils/error-codes';
 import { logger } from '@utils/logger';
 import type { MediaAssetView, UploadPolicy, UploadPurpose, UploadTicket } from './media.types';
 
-
 const MB = 1024 * 1024;
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
