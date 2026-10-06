@@ -34,6 +34,15 @@ const CONTRACT = 'docs/openapi.yaml';
  *
  * Keys off the two-space indent that OpenAPI gives a path entry, so a nested
  * line mentioning the same string cannot start or stop a block by accident.
+ *
+ * A TOP-LEVEL KEY ALSO ENDS A BLOCK, and that line is the important one. An
+ * earlier version only stopped skipping at the next path, so an admin path that
+ * happened to be LAST in the document swallowed `components:` and everything
+ * after it. The failure mode is not a false alarm: once both sides end with an
+ * admin path, both lose their schema definitions, and the guard reports
+ * "unchanged" while comparing a document with no schemas in it. A guard that
+ * quietly stops guarding is worse than no guard, so `assertIntact` below
+ * re-checks the result rather than trusting this loop.
  */
 function stripAdminPaths(yaml: string): string {
   const kept: string[] = [];
@@ -42,6 +51,8 @@ function stripAdminPaths(yaml: string): string {
   for (const line of yaml.split('\n')) {
     if (/^ {2}\/api\/v1\//.test(line)) {
       skipping = ADMIN_PREFIXES.some((prefix) => line.startsWith(prefix));
+    } else if (/^\S/.test(line)) {
+      skipping = false;
     }
 
     if (!skipping) {
@@ -50,6 +61,27 @@ function stripAdminPaths(yaml: string): string {
   }
 
   return kept.join('\n');
+}
+
+/**
+ * Proves the stripper removed admin paths and nothing structural.
+ *
+ * Cheap, and it is the only thing standing between a subtle bug in
+ * `stripAdminPaths` and a green run that checked nothing.
+ */
+function assertIntact(label: string, before: string, after: string): void {
+  for (const marker of ['openapi:', 'paths:', 'components:', '  schemas:']) {
+    if (before.includes(marker) && !after.includes(marker)) {
+      throw new Error(
+        `Stripping ${label} removed "${marker.trim()}" from the document. ` +
+          'The comparison would have been meaningless — fix stripAdminPaths.',
+      );
+    }
+  }
+
+  if (after.includes('  /api/v1/admin/')) {
+    throw new Error(`Stripping ${label} left an admin path behind.`);
+  }
 }
 
 function baselineContract(): string {
@@ -79,8 +111,14 @@ function firstDifference(a: string[], b: string[]): string[] {
   return report;
 }
 
-const baseline = stripAdminPaths(baselineContract());
-const current = stripAdminPaths(readFileSync(CONTRACT, 'utf8'));
+const baselineRaw = baselineContract();
+const currentRaw = readFileSync(CONTRACT, 'utf8');
+
+const baseline = stripAdminPaths(baselineRaw);
+const current = stripAdminPaths(currentRaw);
+
+assertIntact(`the ${BASE} baseline`, baselineRaw, baseline);
+assertIntact('the generated contract', currentRaw, current);
 
 /* eslint-disable no-console -- a CLI script's output IS its result. */
 if (baseline === current) {

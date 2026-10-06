@@ -198,6 +198,19 @@ enum SubscriptionTier {
   @@map("subscription_tier")
 }
 
+/// Editorial rollout state for a subscription product (Batch 15).
+///
+/// Deliberately not merged with `is_active`: that column decides what the APP
+/// is offered, and changing its meaning would change a shipped contract.
+enum PlanRolloutState {
+  live
+  promo
+  draft
+  grandfathered
+
+  @@map("plan_rollout_state")
+}
+
 enum BillingCycle {
   monthly
   quarterly
@@ -1395,6 +1408,22 @@ model Venue {
   /// The provider's id for it, so a later fetch updates rather than duplicates.
   external_id String?     @db.VarChar(255)
 
+  /// Admin panel (Batch 15). Curated venues the panel promotes.
+  ///
+  /// Nullable-free booleans rather than a status enum, because these are two
+  /// independent facts: a venue can be awaiting review AND already retired.
+  /// An enum would force an order on them and lose one.
+  is_featured Boolean @default(false)
+
+  /// False for a venue a user suggested and nobody has looked at yet.
+  ///
+  /// The COLUMN default is true, because the twenty seeded venues are reviewed
+  /// by definition and defaulting false would drop every existing row into the
+  /// review queue on deploy. Provider-sourced rows are the opposite case and
+  /// `upsertSourcedVenues` sets them false explicitly — a venue Geoapify
+  /// returned is precisely one nobody has looked at.
+  is_reviewed Boolean @default(true)
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
@@ -1443,6 +1472,18 @@ model SubscriptionProduct {
 
   is_active  Boolean @default(true)
   sort_order Int     @default(0)
+
+  /// Rollout state for the admin panel (Batch 15).
+  ///
+  /// SEPARATE from `is_active`, which decides whether `/subscriptions/products`
+  /// returns it to the app. This is editorial: a `draft` is being prepared, a
+  /// `promo` is being pushed, and `grandfathered` means existing subscribers
+  /// keep it while nobody new may buy. Folding these into `is_active` would
+  /// have changed what the app sees, and the app's contract is fixed.
+  rollout_state PlanRolloutState @default(live)
+
+  /// Operator note shown beside the state in the panel.
+  rollout_note String? @db.VarChar(300)
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

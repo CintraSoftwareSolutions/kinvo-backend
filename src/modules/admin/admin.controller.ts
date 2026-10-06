@@ -1,15 +1,39 @@
 import type { Request, Response } from 'express';
 
+import type {
+  Mode,
+  ReportStatus,
+  SubscriptionTier,
+  UserRole,
+  UserStatus,
+  VenueCategory,
+} from '@/db/prisma';
 import { requireUser } from '@middleware/authenticate';
 import { sendList, sendSuccess } from '@utils/response';
 import * as adminService from './admin.service';
+import * as analyticsService from './analytics.service';
+import * as contentService from './content.service';
+import * as catalogueService from './catalogue.service';
+import * as snapshotService from './snapshot.service';
+import * as usersService from './users.service';
 import type {
+  ActivityQuery,
   AddRoleMemberBody,
+  AssignFlagBody,
   AuditLogQuery,
   CreateRoleBody,
+  CreateVenueBody,
+  ListUsersQuery,
+  ListVenuesQuery,
+  ModerationQueueQuery,
   SetGuardrailBody,
   SetPermissionsBody,
+  SetProductPriceBody,
+  SetStaffRoleBody,
+  SuspendUserBody,
+  UpdateProductBody,
   UpdateRoleBody,
+  UpdateVenueBody,
 } from './admin.schema';
 
 /** HTTP translation only. No business logic, no database access (spec §0.5). */
@@ -140,4 +164,220 @@ export async function listAuditLog(req: Request, res: Response): Promise<void> {
     has_more: result.has_more,
     limit: result.limit,
   });
+}
+
+// --- users -----------------------------------------------------------------
+
+export async function listUsers(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as ListUsersQuery;
+
+  const result = await usersService.listUsers({
+    limit: query.limit,
+    cursor: query.cursor,
+    search: query.search,
+    status: query.status as UserStatus | undefined,
+    tier: query.tier as SubscriptionTier | undefined,
+    mode: query.mode as Mode | undefined,
+    flagged: query.flagged,
+    staff: query.staff,
+  });
+
+  sendList(res, result.users, {
+    next_cursor: result.next_cursor,
+    has_more: result.has_more,
+    limit: result.limit,
+  });
+}
+
+export async function getUserSnapshot(_req: Request, res: Response): Promise<void> {
+  const snapshot = await snapshotService.userSnapshot();
+
+  sendSuccess(res, { ...snapshot });
+}
+
+export async function getUser(req: Request, res: Response): Promise<void> {
+  const user = await usersService.getUser(req.params.id!);
+
+  sendSuccess(res, { user });
+}
+
+export async function listMemberships(req: Request, res: Response): Promise<void> {
+  const memberships = await usersService.listMemberships(req.params.id!);
+
+  sendSuccess(res, { memberships });
+}
+
+export async function listActivity(req: Request, res: Response): Promise<void> {
+  const { limit } = req.query as unknown as ActivityQuery;
+
+  const activity = await usersService.listActivity(req.params.id!, limit);
+
+  sendSuccess(res, { activity });
+}
+
+export async function suspendUser(req: Request, res: Response): Promise<void> {
+  const body = req.body as SuspendUserBody;
+
+  const user = await usersService.suspendUser({
+    userId: req.params.id!,
+    reason: body.reason,
+    ...actor(req),
+  });
+
+  sendSuccess(res, { user });
+}
+
+export async function reinstateUser(req: Request, res: Response): Promise<void> {
+  const user = await usersService.reinstateUser({
+    userId: req.params.id!,
+    ...actor(req),
+  });
+
+  sendSuccess(res, { user });
+}
+
+export async function setStaffRole(req: Request, res: Response): Promise<void> {
+  const body = req.body as SetStaffRoleBody;
+  const { adminId, ipAddress } = actor(req);
+
+  const user = await usersService.setStaffRole({
+    userId: req.params.id!,
+    role: body.role as UserRole,
+    actingAdminId: adminId,
+    ipAddress,
+  });
+
+  sendSuccess(res, { user });
+}
+
+// --- moderation queue ------------------------------------------------------
+
+export async function getModerationQueue(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as ModerationQueueQuery;
+
+  const result = await contentService.moderationQueue({
+    status: query.status as ReportStatus | undefined,
+    severity: query.severity,
+    assignedToId: query.assigned_to_id,
+    unassigned: query.unassigned,
+    limit: query.limit,
+    cursor: query.cursor,
+  });
+
+  sendList(res, result.items, {
+    next_cursor: result.next_cursor,
+    has_more: result.has_more,
+    limit: result.limit,
+  });
+}
+
+export async function getModerationInsights(_req: Request, res: Response): Promise<void> {
+  const insights = await contentService.moderationInsights();
+
+  sendSuccess(res, { ...insights });
+}
+
+export async function assignFlag(req: Request, res: Response): Promise<void> {
+  const body = req.body as AssignFlagBody;
+
+  const result = await contentService.assignFlag({
+    flagId: req.params.id!,
+    assigneeId: body.assignee_id,
+    ...actor(req),
+  });
+
+  sendSuccess(res, { flag: result });
+}
+
+// --- venues ----------------------------------------------------------------
+
+export async function listVenues(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as ListVenuesQuery;
+
+  const result = await contentService.listVenues({
+    search: query.search,
+    category: query.category as VenueCategory | undefined,
+    featured: query.featured,
+    reviewed: query.reviewed,
+    active: query.active,
+    limit: query.limit,
+    cursor: query.cursor,
+  });
+
+  sendList(res, result.venues, {
+    next_cursor: result.next_cursor,
+    has_more: result.has_more,
+    limit: result.limit,
+  });
+}
+
+export async function updateVenue(req: Request, res: Response): Promise<void> {
+  const body = req.body as UpdateVenueBody;
+
+  const venue = await contentService.updateVenue({
+    venueId: req.params.id!,
+    changes: body as Parameters<typeof contentService.updateVenue>[0]['changes'],
+    ...actor(req),
+  });
+
+  sendSuccess(res, { venue });
+}
+
+// --- plans -----------------------------------------------------------------
+
+export async function listSubscriptionProducts(_req: Request, res: Response): Promise<void> {
+  const plans = await catalogueService.listSubscriptionProducts();
+
+  sendSuccess(res, { plans });
+}
+
+export async function updateSubscriptionProduct(req: Request, res: Response): Promise<void> {
+  const body = req.body as UpdateProductBody;
+
+  const plan = await catalogueService.updateSubscriptionProduct({
+    productId: req.params.id!,
+    changes: body as Parameters<typeof catalogueService.updateSubscriptionProduct>[0]['changes'],
+    ...actor(req),
+  });
+
+  sendSuccess(res, { plan });
+}
+
+export async function setProductPrice(req: Request, res: Response): Promise<void> {
+  const body = req.body as SetProductPriceBody;
+
+  const plan = await catalogueService.setProductPrice({
+    productId: req.params.id!,
+    amountMinor: body.amount_minor,
+    currency: body.currency,
+    note: body.note,
+    ...actor(req),
+  });
+
+  sendSuccess(res, { plan }, 201);
+}
+
+export async function getProductPriceHistory(req: Request, res: Response): Promise<void> {
+  const versions = await catalogueService.productPriceHistory(req.params.id!);
+
+  sendSuccess(res, { versions });
+}
+
+// --- analytics -------------------------------------------------------------
+
+export async function getAnalytics(_req: Request, res: Response): Promise<void> {
+  const dashboard = await analyticsService.analyticsDashboard();
+
+  sendSuccess(res, { ...dashboard });
+}
+
+export async function createVenue(req: Request, res: Response): Promise<void> {
+  const body = req.body as CreateVenueBody;
+
+  const venue = await contentService.createVenue({
+    data: body as Parameters<typeof contentService.createVenue>[0]['data'],
+    ...actor(req),
+  });
+
+  sendSuccess(res, { venue }, 201);
 }

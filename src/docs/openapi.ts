@@ -34,10 +34,17 @@ import { testPurchaseSchema } from '@modules/subscriptions/subscriptions.schema'
 import { reviewDecisionSchema } from '@modules/media/media.schema';
 import {
   addRoleMemberSchema,
+  assignFlagSchema,
   createRoleSchema,
+  createVenueSchema,
   setGuardrailSchema,
   setPermissionsSchema,
+  setProductPriceSchema,
+  setStaffRoleSchema,
+  suspendUserSchema,
+  updateProductSchema,
   updateRoleSchema,
+  updateVenueSchema,
 } from '@modules/admin/admin.schema';
 import * as settingsSchema from '@modules/settings/settings.schema';
 import * as usersSchema from '@modules/users/users.schema';
@@ -1512,6 +1519,205 @@ export const ROUTES: RouteDoc[] = [
       'Ends that session rather than only removing it from a list: the refresh tokens bound to the device are revoked, its access token stops working at once (AUTH_TOKEN_INVALID), and its live socket is closed.',
     auth: true,
     errors: [E.VALIDATION_FAILED, E.NOT_FOUND],
+  },
+  // --- admin: user management ----------------------------------------------
+  {
+    method: 'get',
+    path: '/admin/users/snapshot',
+    tag: 'Admin',
+    summary: 'User-management snapshot',
+    description:
+      'Every figure is COUNTED on request, never stored. A dashboard backed by a maintained counter is a dashboard that is quietly wrong — the counter drifts the first time a row changes by a path nobody remembered to update, and it keeps rendering a confident number. The cost is a dozen aggregates per load, which is right for a screen a handful of operators open and wrong for anything on the app’s hot path. Where a figure is approximate the field comment says so.',
+    auth: true,
+    errors: [E.FORBIDDEN],
+  },
+  {
+    method: 'get',
+    path: '/admin/users',
+    tag: 'Admin',
+    summary: 'List users',
+    description:
+      'Returns the panel’s single `status` label alongside the honest fields it is derived from — `account_status`, `tier` and `is_flagged` — so a filter acts on the real state rather than on a label. `tier` comes from `resolveTier` over Subscription rows, never from the denormalised `subscription_tier` column, which is an admin-list convenience and not an entitlement. Risk is derived per request from open reports, unresolved flags and blocks received; it is never a stored score, because a stored one would outlive the conduct that caused it.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/users/{id}',
+    tag: 'Admin',
+    summary: 'One account in detail',
+    description:
+      'COUNTS, NOT CONTENT. Matches, messages, swipes and reports are returned as totals — an admin endpoint that hands back somebody’s conversations is the largest privacy surface in the product, and it is not this one.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND],
+  },
+  {
+    method: 'get',
+    path: '/admin/users/{id}/membership',
+    tag: 'Admin',
+    summary: 'Subscription history',
+    description:
+      'Every subscription row this account has held, with the status and period of each. Read-only: there is no route anywhere in this API that creates one, because payment handling is not in this codebase (spec §5.10).',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND],
+  },
+  {
+    method: 'get',
+    path: '/admin/users/{id}/activity',
+    tag: 'Admin',
+    summary: 'Account activity',
+    description:
+      'Recorded events only — admin actions taken against the account, verification decisions, and its own moderation history. There is no product event stream, and adding a write on every action in the app to fill this screen would be the wrong trade.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'post',
+    path: '/admin/users/{id}/suspend',
+    tag: 'Admin',
+    summary: 'Suspend an account',
+    description:
+      'A `reason` is REQUIRED: the account holder is told why, and whoever reviews the decision later needs to know what it was for — a suspension with no reason cannot be explained or safely reversed by anybody but the person who made it. Suspension takes effect on the account’s very next request, not when its 30-minute token expires, because `authenticate` loads the user every time. Deletes nothing.',
+    body: suspendUserSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'post',
+    path: '/admin/users/{id}/reinstate',
+    tag: 'Admin',
+    summary: 'Lift a suspension',
+    description:
+      'Restores the account to active. Audited like every other decision, so a suspension and its reversal both have an actor against them.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT],
+  },
+  {
+    method: 'patch',
+    path: '/admin/users/{id}/role',
+    tag: 'Admin',
+    summary: 'Change a staff role',
+    description:
+      'The most dangerous route in the admin surface — it is how somebody grants themselves more — so it holds its own permission, separate from suspension: an operator who can police accounts cannot also create administrators. Three guards: you cannot change your OWN role, the last remaining administrator cannot be demoted (there would be nobody left able to undo it), and demoting to `user` deletes the granular role memberships rather than leaving them to take effect again on a future promotion.',
+    body: setStaffRoleSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT, E.VALIDATION_FAILED],
+  },
+  // --- admin: moderation queue, venues, catalogue, analytics ---------------
+  {
+    method: 'get',
+    path: '/admin/moderation/queue',
+    tag: 'Admin',
+    summary: 'The moderation queue',
+    description:
+      'Human reports and automated flags in one list, each row carrying `source` so the panel can tell them apart. It returns THAT something was reported and about whom, never the reported message text — an endpoint that hands back conversation content on request is the largest privacy surface in the product, and reading content needs a justification tied to a specific case, which is not this endpoint. Severity collapses the five-level enum into the panel’s three: `critical` folds UP into High, never dropped. Resolution stays on /reports/review and /moderation/flags, which do the second-review check, the badge recomputation, the audit entry and the notification.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/moderation/insights',
+    tag: 'Admin',
+    summary: 'Queue health and load',
+    description:
+      'Twelve weeks of load, the top reported categories, and open cases per owner. `resolved` counts reports that reached a DECISION in that week, not reports raised that week which are now resolved — a week can and should resolve more than it received.',
+    auth: true,
+    errors: [E.FORBIDDEN],
+  },
+  {
+    method: 'patch',
+    path: '/admin/moderation/flags/{id}/assignee',
+    tag: 'Admin',
+    summary: 'Claim or release a flag',
+    description:
+      'Send `assignee_id: null` to release. Claiming moves the row to `under_review` so two moderators working one queue do not both act on it — the 409 on a second decision catches that afterwards, this prevents the wasted work. Only staff can own a row; assigning to an ordinary account would park it with somebody who can never open it.',
+    body: assignFlagSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/venues',
+    tag: 'Admin',
+    summary: 'List venues',
+    description:
+      'Returns the panel’s two-value `status` alongside the three honest booleans it is derived from (`is_featured`, `is_reviewed`, `is_active`), so a filter can act on the real fields rather than on a label.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'post',
+    path: '/admin/venues',
+    tag: 'Admin',
+    summary: 'Add a venue',
+    description:
+      'COORDINATES ARE REQUIRED, as `longitude` and `latitude` — every suggestion query is a radius query, so a venue with no location would never be shown to anybody while sitting in the panel’s list looking complete. The row insert and the PostGIS write commit together, so that state cannot exist. `modes` needs at least one entry for the same reason: a venue matching no mode can never be suggested. Created venues are `is_reviewed` by definition — an operator typing one in IS the review — but never `is_featured`, because featuring is a separate decision with its own audit entry and should not reach every user in the request that first described the place.',
+    body: createVenueSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'patch',
+    path: '/admin/venues/{id}',
+    tag: 'Admin',
+    summary: 'Edit or feature a venue',
+    description:
+      'Featuring an unreviewed venue answers 409: featuring promotes it into the app’s suggestions, and doing that to something nobody has looked at is how a user-submitted venue reaches everyone unchecked. Location is deliberately not editable — coordinates live in a PostGIS column that only src/db/geo.ts writes, and an edit that silently dropped a moved venue’s new coordinates would be worse than refusing to move it.',
+    body: updateVenueSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/subscription-products',
+    tag: 'Admin',
+    summary: 'The paywall catalogue',
+    description:
+      'Products with their open price, entitling subscriber count and contributed MRR. `rollout_state` is editorial and separate from `is_active`: `is_active` decides whether /subscriptions/products returns it to the app, while `draft`/`promo`/`grandfathered` describe where it is in its life. MRR normalises yearly prices to a month so the cycles are comparable; it is not what was billed this month.',
+    auth: true,
+    errors: [E.FORBIDDEN],
+  },
+  {
+    method: 'patch',
+    path: '/admin/subscription-products/{id}',
+    tag: 'Admin',
+    summary: 'Edit a product',
+    description:
+      'Name, rollout state, note, activation and sort order. `tier` and `billing_cycle` are deliberately NOT editable: flipping a product’s tier would change what every existing subscriber on it is entitled to without a payment, which is exactly the entitlement-without-verification that spec §5.10 forbids. A new tier means a new product. Nothing under this path can create a subscription or grant anybody access.',
+    body: updateProductSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/subscription-products/{id}/prices',
+    tag: 'Admin',
+    summary: 'Price history',
+    description:
+      'Every version, newest first, with the window each was in force. This is what grandfathering and reconciling a disputed charge are answered from.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND],
+  },
+  {
+    method: 'post',
+    path: '/admin/subscription-products/{id}/prices',
+    tag: 'Admin',
+    summary: 'Publish a new price',
+    description:
+      'POST and 201, not PATCH, because a price change CREATES a version rather than editing one — somebody subscribed last year at last year’s price, and overwriting the row would destroy the record of what they were actually charged. Closing the open version and opening the new one is one transaction, so there is never a moment with two open prices or none. Prices here are the catalogue the paywall RENDERS and are informational: whoever takes the payment decides what is actually charged, and this backend cannot change that. Re-publishing the identical amount answers 409.',
+    body: setProductPriceSchema,
+    auth: true,
+    errors: [E.FORBIDDEN, E.NOT_FOUND, E.CONFLICT, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
+    path: '/admin/analytics',
+    tag: 'Admin',
+    summary: 'The analytics dashboard',
+    description:
+      'All four tabs in one request, because the panel renders them over one dataset and four endpoints would mean four round trips for one screen. EVERY SERIES CARRIES A `basis` STRING saying exactly what it counts, and two of them do not mean what their axis labels suggest: `engagement` counts the account base at each month end rather than monthly active users, because last_active_at is overwritten on every visit and keeps no history; and `acquisitionChannels` reports SIGN-IN METHOD, not marketing attribution, because no referral or campaign source is recorded anywhere in this system. Nothing is cached, so `generated_at` is always now.',
+    auth: true,
+    errors: [E.FORBIDDEN],
   },
 ];
 

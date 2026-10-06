@@ -8,15 +8,30 @@ import { asyncHandler } from '@utils/async-handler';
 import * as controller from './admin.controller';
 import { ADMIN_PERMISSIONS } from './admin.types';
 import {
+  activityQuerySchema,
   addRoleMemberSchema,
+  assignFlagSchema,
   auditLogQuerySchema,
   createRoleSchema,
+  createVenueSchema,
+  flagIdParamSchema,
   guardrailKeyParamSchema,
+  listUsersQuerySchema,
+  listVenuesQuerySchema,
+  moderationQueueQuerySchema,
+  productIdParamSchema,
   roleIdParamSchema,
   roleMemberParamsSchema,
   setGuardrailSchema,
   setPermissionsSchema,
+  setProductPriceSchema,
+  setStaffRoleSchema,
+  suspendUserSchema,
+  updateProductSchema,
   updateRoleSchema,
+  updateVenueSchema,
+  userIdParamSchema,
+  venueIdParamSchema,
 } from './admin.schema';
 
 /**
@@ -153,4 +168,174 @@ adminRouter.get(
   requirePermission(ADMIN_PERMISSIONS.AUDIT_READ),
   validate({ query: auditLogQuerySchema }),
   asyncHandler(controller.listAuditLog),
+);
+
+// --- users -----------------------------------------------------------------
+
+/**
+ * Mounted BEFORE `/users/:id`, so `snapshot` is never parsed as a user id.
+ */
+adminRouter.get(
+  '/users/snapshot',
+  requirePermission(ADMIN_PERMISSIONS.USERS_READ),
+  asyncHandler(controller.getUserSnapshot),
+);
+
+adminRouter.get(
+  '/users',
+  requirePermission(ADMIN_PERMISSIONS.USERS_READ),
+  validate({ query: listUsersQuerySchema }),
+  asyncHandler(controller.listUsers),
+);
+
+adminRouter.get(
+  '/users/:id',
+  requirePermission(ADMIN_PERMISSIONS.USERS_READ),
+  validate({ params: userIdParamSchema }),
+  asyncHandler(controller.getUser),
+);
+
+adminRouter.get(
+  '/users/:id/membership',
+  requirePermission(ADMIN_PERMISSIONS.USERS_READ),
+  validate({ params: userIdParamSchema }),
+  asyncHandler(controller.listMemberships),
+);
+
+adminRouter.get(
+  '/users/:id/activity',
+  requirePermission(ADMIN_PERMISSIONS.USERS_READ),
+  validate({ params: userIdParamSchema, query: activityQuerySchema }),
+  asyncHandler(controller.listActivity),
+);
+
+adminRouter.post(
+  '/users/:id/suspend',
+  requirePermission(ADMIN_PERMISSIONS.USERS_SUSPEND, { mutates: true }),
+  validate({ params: userIdParamSchema, body: suspendUserSchema }),
+  asyncHandler(controller.suspendUser),
+);
+
+adminRouter.post(
+  '/users/:id/reinstate',
+  requirePermission(ADMIN_PERMISSIONS.USERS_SUSPEND, { mutates: true }),
+  validate({ params: userIdParamSchema }),
+  asyncHandler(controller.reinstateUser),
+);
+
+/**
+ * The most dangerous route in the admin surface: it is how somebody grants
+ * themselves more. Its own permission, separate from suspension, so an
+ * operator who can police accounts cannot also create administrators.
+ */
+adminRouter.patch(
+  '/users/:id/role',
+  requirePermission(ADMIN_PERMISSIONS.USERS_ROLE, { mutates: true }),
+  validate({ params: userIdParamSchema, body: setStaffRoleSchema }),
+  asyncHandler(controller.setStaffRole),
+);
+
+// --- moderation queue ------------------------------------------------------
+//
+// These READ and ASSIGN. Resolution stays on the shipped `/reports/review` and
+// `/moderation/flags` endpoints, which already do the second-review check, the
+// badge recomputation, the audit entry and the notification (CLAUDE.md). A
+// second way to resolve a report would be a second chance to skip all four.
+
+adminRouter.get(
+  '/moderation/queue',
+  requirePermission(ADMIN_PERMISSIONS.MODERATION_READ),
+  validate({ query: moderationQueueQuerySchema }),
+  asyncHandler(controller.getModerationQueue),
+);
+
+adminRouter.get(
+  '/moderation/insights',
+  requirePermission(ADMIN_PERMISSIONS.MODERATION_READ),
+  asyncHandler(controller.getModerationInsights),
+);
+
+adminRouter.patch(
+  '/moderation/flags/:id/assignee',
+  requirePermission(ADMIN_PERMISSIONS.MODERATION_RESOLVE, { mutates: true }),
+  validate({ params: flagIdParamSchema, body: assignFlagSchema }),
+  asyncHandler(controller.assignFlag),
+);
+
+// --- venues ----------------------------------------------------------------
+
+adminRouter.get(
+  '/venues',
+  requirePermission(ADMIN_PERMISSIONS.VENUES_READ),
+  validate({ query: listVenuesQuerySchema }),
+  asyncHandler(controller.listVenues),
+);
+
+/**
+ * The only route in this API that writes a PostGIS column from a request body.
+ *
+ * The insert and the spatial write commit together, so a venue can never exist
+ * without a location — which would make it invisible to every radius query
+ * while looking complete in the panel.
+ */
+adminRouter.post(
+  '/venues',
+  requirePermission(ADMIN_PERMISSIONS.VENUES_WRITE, { mutates: true }),
+  validate({ body: createVenueSchema }),
+  asyncHandler(controller.createVenue),
+);
+
+adminRouter.patch(
+  '/venues/:id',
+  requirePermission(ADMIN_PERMISSIONS.VENUES_WRITE, { mutates: true }),
+  validate({ params: venueIdParamSchema, body: updateVenueSchema }),
+  asyncHandler(controller.updateVenue),
+);
+
+// --- plans and pricing -----------------------------------------------------
+//
+// The catalogue only. Nothing under here can create a subscription or grant
+// entitlement — see the header of `plans.service.ts`, and the test that asserts
+// it. `SUBSCRIPTIONS_WRITE` names the catalogue, not anybody's access.
+
+adminRouter.get(
+  '/subscription-products',
+  requirePermission(ADMIN_PERMISSIONS.SUBSCRIPTIONS_READ),
+  asyncHandler(controller.listSubscriptionProducts),
+);
+
+adminRouter.patch(
+  '/subscription-products/:id',
+  requirePermission(ADMIN_PERMISSIONS.SUBSCRIPTIONS_WRITE, { mutates: true }),
+  validate({ params: productIdParamSchema, body: updateProductSchema }),
+  asyncHandler(controller.updateSubscriptionProduct),
+);
+
+adminRouter.get(
+  '/subscription-products/:id/prices',
+  requirePermission(ADMIN_PERMISSIONS.SUBSCRIPTIONS_READ),
+  validate({ params: productIdParamSchema }),
+  asyncHandler(controller.getProductPriceHistory),
+);
+
+/**
+ * POST, not PATCH, and it answers 201.
+ *
+ * A price change CREATES a version rather than editing one, so the method says
+ * what actually happens. The old amount has to survive for grandfathering and
+ * for reconciling what people were really charged (spec §5.10).
+ */
+adminRouter.post(
+  '/subscription-products/:id/prices',
+  requirePermission(ADMIN_PERMISSIONS.SUBSCRIPTIONS_WRITE, { mutates: true }),
+  validate({ params: productIdParamSchema, body: setProductPriceSchema }),
+  asyncHandler(controller.setProductPrice),
+);
+
+// --- analytics -------------------------------------------------------------
+
+adminRouter.get(
+  '/analytics',
+  requirePermission(ADMIN_PERMISSIONS.ANALYTICS_READ),
+  asyncHandler(controller.getAnalytics),
 );

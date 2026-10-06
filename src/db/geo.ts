@@ -59,6 +59,32 @@ export async function setVenueLocation(venueId: string, coordinates: Coordinates
   `;
 }
 
+/**
+ * The same write, inside a caller's transaction.
+ *
+ * Creating a venue is two statements — Prisma inserts the row, and only raw SQL
+ * can set the `geography` column — and they MUST commit together. A venue that
+ * exists with no location is not a partial success: it can never appear in a
+ * radius query, so it is invisible in the app while looking complete in the
+ * admin panel, which is the kind of bug that gets found months later by a user.
+ *
+ * Takes the transaction client rather than the module-level one; passing the
+ * latter here would silently run outside the transaction and defeat the point.
+ */
+export async function setVenueLocationTx(
+  tx: Prisma.TransactionClient,
+  venueId: string,
+  coordinates: Coordinates,
+): Promise<void> {
+  assertValidCoordinates(coordinates);
+
+  await tx.$executeRaw`
+    UPDATE venues
+    SET location = ${point(coordinates)}
+    WHERE id = ${venueId}::uuid
+  `;
+}
+
 export interface SourcedVenue {
   externalId: string;
   name: string;
@@ -74,6 +100,14 @@ export interface SourcedVenue {
 
 // A refresh updates what the provider describes and leaves what an admin
 // decides alone: category, modes and whether the venue is listed at all.
+//
+// `is_reviewed` is inserted FALSE, against the column's default of true. The
+// default exists for the seeded venues, which are reviewed by definition; a row
+// a places provider returned is the exact opposite — nobody has looked at it,
+// and taking the default would quietly file every imported venue as already
+// approved and empty the admin review queue of the only rows that belong in it.
+// It is absent from the DO UPDATE clause for the same reason the rest of the
+// admin fields are: a refresh must never undo a decision somebody made.
 export async function upsertSourcedVenues(source: string, venues: SourcedVenue[]): Promise<void> {
   if (venues.length === 0) {
     return;
@@ -85,11 +119,12 @@ export async function upsertSourcedVenues(source: string, venues: SourcedVenue[]
     venues.map(
       (venue) => prisma.$executeRaw`
         INSERT INTO venues (id, name, category, modes, location, address, city, country,
-                            website_url, phone, source, external_id, is_active, created_at, updated_at)
+                            website_url, phone, source, external_id, is_active, is_reviewed,
+                            created_at, updated_at)
         VALUES (gen_random_uuid(), ${venue.name}, ${venue.category}::venue_category,
                 ${venue.modes}::mode[], ${point(venue.coordinates)}, ${venue.address},
                 ${venue.city}, ${venue.country}, ${venue.websiteUrl}, ${venue.phone},
-                ${source}::venue_source, ${venue.externalId}, true, NOW(), NOW())
+                ${source}::venue_source, ${venue.externalId}, true, false, NOW(), NOW())
         ON CONFLICT (source, external_id) DO UPDATE
         SET name = EXCLUDED.name,
             location = EXCLUDED.location,
