@@ -59,6 +59,51 @@ export async function setVenueLocation(venueId: string, coordinates: Coordinates
   `;
 }
 
+export interface SourcedVenue {
+  externalId: string;
+  name: string;
+  category: string;
+  modes: string[];
+  coordinates: Coordinates;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  websiteUrl: string | null;
+  phone: string | null;
+}
+
+// A refresh updates what the provider describes and leaves what an admin
+// decides alone: category, modes and whether the venue is listed at all.
+export async function upsertSourcedVenues(source: string, venues: SourcedVenue[]): Promise<void> {
+  if (venues.length === 0) {
+    return;
+  }
+
+  venues.forEach((venue) => assertValidCoordinates(venue.coordinates));
+
+  await prisma.$transaction(
+    venues.map(
+      (venue) => prisma.$executeRaw`
+        INSERT INTO venues (id, name, category, modes, location, address, city, country,
+                            website_url, phone, source, external_id, is_active, created_at, updated_at)
+        VALUES (gen_random_uuid(), ${venue.name}, ${venue.category}::venue_category,
+                ${venue.modes}::mode[], ${point(venue.coordinates)}, ${venue.address},
+                ${venue.city}, ${venue.country}, ${venue.websiteUrl}, ${venue.phone},
+                ${source}::venue_source, ${venue.externalId}, true, NOW(), NOW())
+        ON CONFLICT (source, external_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            location = EXCLUDED.location,
+            address = EXCLUDED.address,
+            city = EXCLUDED.city,
+            country = EXCLUDED.country,
+            website_url = EXCLUDED.website_url,
+            phone = EXCLUDED.phone,
+            updated_at = NOW()
+      `,
+    ),
+  );
+}
+
 export async function clearProfileLocation(profileId: string): Promise<void> {
   await prisma.$executeRaw`
     UPDATE profiles

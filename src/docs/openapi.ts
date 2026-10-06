@@ -1084,7 +1084,7 @@ export const ROUTES: RouteDoc[] = [
     tag: 'Venues',
     summary: 'Search venues',
     description:
-      'Distance-sorted, nearest first, in METRES. Filter by `category` and `mode` — a venue tagged for study_buddy will not surface in cuddle. Pass `latitude`/`longitude` to browse another area without moving your profile location.',
+      'Kinvo\'s curated venues first, then places from a provider, each nearest first, in METRES. Filter by `category` and `mode` — a venue tagged for study_buddy will not surface in cuddle. Pass `latitude`/`longitude` to browse another area without moving your profile location. With `GEOAPIFY_API_KEY` set, the first search in an area fills it with named cafes, restaurants, parks, gyms, libraries and dog parks from Geoapify (refreshed at most weekly). Each venue carries `source`: `curated` or `geoapify`; show "Powered by Geoapify" and "© OpenStreetMap contributors" wherever `geoapify` venues are listed.',
     auth: true,
     errors: [E.VALIDATION_FAILED, E.BAD_REQUEST],
   },

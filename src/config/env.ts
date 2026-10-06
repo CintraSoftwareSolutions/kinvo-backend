@@ -149,6 +149,9 @@ export const envSchema = z.object({
   COMMUNITY_GUIDELINES_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
   TERMS_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
   PRIVACY_POLICY_URL: z.preprocess(blankIsUnset, httpsPage.optional()),
+
+  GEOAPIFY_API_KEY: z.preprocess(blankIsUnset, z.string().min(16).optional()),
+  PLACES_DAILY_CREDIT_LIMIT: z.coerce.number().int().min(0).default(2500),
 });
 
 export type Env = z.infer<typeof envSchema>;

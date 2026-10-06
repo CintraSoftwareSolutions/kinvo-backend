@@ -1994,6 +1994,47 @@ Served from here rather than built into the app so a policy can move, or be
 added, without an app release. A blank setting means unset, as with
 `LIVEKIT_URL`, because `.env` templates carry empty keys.
 
+### 2026-10-06 — Venues from Geoapify, alongside Kinvo's own
+
+Venue search only ever listed Kinvo's curated venues (spec §5.9), and the only
+ones that exist are the development seed's, in London. Everywhere else,
+including where the product owner tests (Rawalpindi and Islamabad), choosing a
+place for a plan opened an empty list. Nobody can curate yet: the admin panel
+does not exist.
+
+With `GEOAPIFY_API_KEY` set, the first venue search in an area now fills it
+from Geoapify's Places API (OpenStreetMap data): named cafes, restaurants,
+parks, gyms, libraries and dog parks. Romantic and health-conscious venues
+have no reliable equivalent there and stay curated only. Without the key,
+nothing changes.
+
+- **Stored, not proxied.** Places are written into `venues` with
+  `source = geoapify` and the provider's id in `external_id` (unique per
+  source), so saving a place and plans that use it work as for any venue.
+  Geoapify allows storing results with attribution; Google's terms would not
+  have, which is one reason it was not chosen. A refresh updates the name,
+  position, address and contact details, and leaves category, modes and
+  `is_active` alone, so a venue an admin retires stays retired.
+- **Areas, not people.** An area is a cell of a 0.05° grid (about 5.5 km).
+  Geoapify is only ever told a cell's centre, never the searcher's location.
+  A cell is fetched at most once a week: `SET NX` in Redis claims it, so two
+  searches arriving together do not both pay for it.
+- **Inside the free plan.** Six requests of up to 20 places, one credit each,
+  per area. `PLACES_DAILY_CREDIT_LIMIT` (default 2,500, under the plan's
+  3,000) stops fetching for the rest of the UTC day.
+- **Never at the search's expense.** Fetching has a 4-second limit, and a
+  failure, a timeout or the limit leaves the search answering with the venues
+  it already has. A failed or partial fetch is tried again after 10 minutes.
+- **Kinvo's own first.** Curated venues are listed before fetched ones, each
+  group nearest first, and every venue now carries `source`.
+- **Attribution.** The free plan requires "Powered by Geoapify" and
+  OpenStreetMap credit wherever its places are shown; the app adds both to the
+  places list when it shows any.
+
+The key goes into SSM (`/kinvo/staging/geoapify_api_key`) and the server's
+`.env`, never into the repository. Migration `20261006120000_venue_sources`
+adds the two columns and the index; existing venues become `curated`.
+
 ## 3. Batch plan and dependencies
 
 Status: ✅ done · ▶ current · ⬜ not started

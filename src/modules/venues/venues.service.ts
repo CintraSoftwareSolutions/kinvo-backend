@@ -1,6 +1,7 @@
-import { MatchStatus, type Mode, type VenueCategory, prisma } from '@/db/prisma';
+import { MatchStatus, type Mode, type VenueCategory, VenueSource, prisma } from '@/db/prisma';
 import { type Coordinates, findVenuesWithinRadius, getProfileCoordinates } from '@/db/geo';
 import { ApiError } from '@utils/api-error';
+import { fillAreaFromProvider } from './venue-fill.service';
 
 const DEFAULT_RADIUS_METRES = 10_000;
 const MAX_RADIUS_METRES = 50_000;
@@ -17,6 +18,7 @@ export interface VenueView {
   photo_url: string | null;
   website_url: string | null;
   modes: Mode[];
+  source: VenueSource;
   distance_metres: number | null;
   is_saved: boolean;
 }
@@ -33,6 +35,7 @@ interface VenueRow {
   photo_url: string | null;
   website_url: string | null;
   modes: Mode[];
+  source: VenueSource;
 }
 
 function toView(venue: VenueRow, distanceMetres: number | null, savedIds: Set<string>): VenueView {
@@ -48,6 +51,7 @@ function toView(venue: VenueRow, distanceMetres: number | null, savedIds: Set<st
     photo_url: venue.photo_url,
     website_url: venue.website_url,
     modes: venue.modes,
+    source: venue.source,
     distance_metres: distanceMetres,
     is_saved: savedIds.has(venue.id),
   };
@@ -65,6 +69,7 @@ const VENUE_SELECT = {
   photo_url: true,
   website_url: true,
   modes: true,
+  source: true,
 } as const;
 
 async function savedVenueIds(userId: string, venueIds: string[]): Promise<Set<string>> {
@@ -94,6 +99,7 @@ export async function searchVenues(
   options: SearchVenuesOptions,
 ): Promise<VenueView[]> {
   const centre = await resolveCentre(userId, options);
+  await fillAreaFromProvider(centre);
   const radius = Math.min(options.radius_metres ?? DEFAULT_RADIUS_METRES, MAX_RADIUS_METRES);
   const limit = Math.min(options.limit ?? 20, 50);
 
@@ -124,9 +130,15 @@ export async function searchVenues(
     venues.map((venue) => venue.id),
   );
 
+  // Kinvo's own venues first: they were chosen as places to meet.
+  const rank = (venue: VenueView): number => (venue.source === VenueSource.curated ? 0 : 1);
+
   return venues
     .map((venue) => toView(venue, distanceById.get(venue.id) ?? null, saved))
-    .sort((a, b) => (a.distance_metres ?? Infinity) - (b.distance_metres ?? Infinity))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) || (a.distance_metres ?? Infinity) - (b.distance_metres ?? Infinity),
+    )
     .slice(0, limit);
 }
 

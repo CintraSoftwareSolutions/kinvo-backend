@@ -161,6 +161,7 @@ append_secret livekit_api_secret LIVEKIT_API_SECRET
 # Not a secret — it identifies the application and ships inside the app —
 # but it belongs with the rest so a rebuilt server keeps Google sign-in.
 append_secret google_oauth_client_ids GOOGLE_OAUTH_CLIENT_IDS
+append_secret geoapify_api_key GEOAPIFY_API_KEY
 
 chmod 600 "$APP_DIR/.env"
 

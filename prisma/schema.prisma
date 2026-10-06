@@ -183,6 +183,13 @@ enum VenueCategory {
   @@map("venue_category")
 }
 
+enum VenueSource {
+  curated
+  geoapify
+
+  @@map("venue_source")
+}
+
 enum SubscriptionTier {
   free
   basic
@@ -1383,6 +1390,11 @@ model Venue {
   modes     Mode[]
   is_active Boolean @default(true)
 
+  /// Where the venue came from: Kinvo's own list, or a places provider.
+  source      VenueSource @default(curated)
+  /// The provider's id for it, so a later fetch updates rather than duplicates.
+  external_id String?     @db.VarChar(255)
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
@@ -1390,6 +1402,7 @@ model Venue {
   plans    Plan[]
   messages Message[]
 
+  @@unique([source, external_id])
   @@index([category])
   @@index([city])
   @@map("venues")
