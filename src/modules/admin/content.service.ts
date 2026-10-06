@@ -333,6 +333,164 @@ export interface ModerationInsights {
  * raised that week which are now resolved — the second is a different question
  * and would make the two series incomparable.
  */
+export interface PriorityCase {
+  id: string;
+  source: 'report' | 'flag';
+  name: string;
+  userId: string;
+  reason: string;
+  mode: string;
+  /**
+   * The REPORTER'S OWN words about why they filed it — not the reported
+   * message. Null for an automated flag, which has no author to quote.
+   *
+   * Serving this is correct and the distinction is worth being precise about,
+   * because an earlier version of this module withheld it on a privacy
+   * argument that did not hold. The line is conversation CONTENT: no endpoint
+   * returns a message somebody sent. A complaint somebody wrote in order to be
+   * read by moderation is the opposite case — withholding it leaves a reviewer
+   * with a name and an enum, which is not enough to act on, and the shipped
+   * `/reports/review` has always returned it alongside the reporter's identity.
+   */
+  description: string | null;
+  severity: 'High' | 'Medium';
+  createdAt: string;
+}
+
+/**
+ * The escalations tab: open cases that need a decision soon.
+ *
+ * ORDERED BY SEVERITY FIRST, then oldest within each band — the one list in
+ * this module that is not purely oldest-first. A priority view whose first row
+ * is a week-old Medium while a High waits below it is not a priority view. The
+ * oldest-first rule still governs inside a band, so nothing gets stranded.
+ *
+ * `Low` is excluded by construction, not filtered late: this is the list for
+ * cases that cannot wait, and padding it with the ones that can is how a
+ * priority queue becomes the ordinary queue with a different title.
+ */
+export async function moderationEscalations(limit: number): Promise<PriorityCase[]> {
+  const [reports, flags] = await Promise.all([
+    prisma.report.findMany({
+      where: {
+        status: { in: [ReportStatus.open, ReportStatus.under_review] },
+        deleted_at: null,
+        // Only the reasons that infer to High or Medium. Done in the query
+        // rather than by fetching everything and dropping Low afterwards,
+        // which would make `limit` mean something different per page.
+        reason: {
+          in: (Object.keys(REPORT_SEVERITY) as ReportReason[]).filter(
+            (reason) => REPORT_SEVERITY[reason] !== 'Low',
+          ),
+        },
+      },
+      orderBy: { created_at: 'asc' },
+      take: limit,
+      select: {
+        id: true,
+        reason: true,
+        description: true,
+        created_at: true,
+        reported: {
+          select: {
+            id: true,
+            display_name: true,
+            user_modes: {
+              where: { is_enabled: true, is_primary: true },
+              select: { mode: true },
+              take: 1,
+            },
+          },
+        },
+      },
+    }),
+    prisma.moderationFlag.findMany({
+      where: {
+        status: { in: [ReportStatus.open, ReportStatus.under_review] },
+        subject_type: 'user',
+        severity: {
+          in: [ModerationSeverity.critical, ModerationSeverity.high, ModerationSeverity.medium],
+        },
+      },
+      orderBy: { created_at: 'asc' },
+      take: limit,
+      select: {
+        id: true,
+        subject_id: true,
+        reason: true,
+        severity: true,
+        created_at: true,
+      },
+    }),
+  ]);
+
+  const subjects = await prisma.user.findMany({
+    where: { id: { in: flags.map((flag) => flag.subject_id) } },
+    select: {
+      id: true,
+      display_name: true,
+      user_modes: {
+        where: { is_enabled: true, is_primary: true },
+        select: { mode: true },
+        take: 1,
+      },
+    },
+  });
+
+  const subjectById = new Map(subjects.map((user) => [user.id, user]));
+
+  const cases: PriorityCase[] = [
+    ...reports.map((report) => ({
+      id: report.id,
+      source: 'report' as const,
+      name: report.reported.display_name,
+      userId: report.reported.id,
+      reason: report.reason,
+      mode: report.reported.user_modes[0]
+        ? modeLabel(report.reported.user_modes[0].mode)
+        : '—',
+      description: report.description,
+      // Narrowed safely: the query already excluded every Low reason.
+      severity: REPORT_SEVERITY[report.reason] as 'High' | 'Medium',
+      createdAt: report.created_at.toISOString(),
+    })),
+    ...flags.flatMap((flag) => {
+      const subject = subjectById.get(flag.subject_id);
+
+      if (!subject) {
+        return [];
+      }
+
+      return [
+        {
+          id: flag.id,
+          source: 'flag' as const,
+          name: subject.display_name,
+          userId: subject.id,
+          reason: flag.reason,
+          mode: subject.user_modes[0] ? modeLabel(subject.user_modes[0].mode) : '—',
+          // An automated finding has no author, so there is nothing to quote.
+          // Null rather than a generated sentence — an invented description
+          // reads to a reviewer exactly like something a person wrote.
+          description: null,
+          severity: severityLabel(flag.severity) as 'High' | 'Medium',
+          createdAt: flag.created_at.toISOString(),
+        },
+      ];
+    }),
+  ];
+
+  const rank = { High: 0, Medium: 1 } as const;
+
+  cases.sort(
+    (a, b) =>
+      rank[a.severity] - rank[b.severity] ||
+      Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
+
+  return cases.slice(0, limit);
+}
+
 export async function moderationInsights(): Promise<ModerationInsights> {
   const weeks = 12;
   const now = new Date();

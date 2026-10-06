@@ -5,7 +5,14 @@ import { seedAdminRbac } from '../../../prisma/seeds/admin-rbac';
 import { seedProducts } from '../../../prisma/seeds/products';
 import { closeDatabase, resetDatabase } from '../../helpers/db';
 import { authHeader, createAuthenticatedUser } from '../../helpers/auth';
-import { createUser, createVenue } from '../../helpers/factories';
+import {
+  createConversation,
+  createMatch,
+  createMessage,
+  createUser,
+  createUserWithProfile,
+  createVenue,
+} from '../../helpers/factories';
 import { api, expectSuccessEnvelope } from '../../helpers/request';
 import { connectRedis, disconnectRedis, seedEntitlements } from '../../helpers/entitlements';
 
@@ -15,7 +22,10 @@ import { connectRedis, disconnectRedis, seedEntitlements } from '../../helpers/e
  *
  * Three things in this file matter more than the happy paths:
  *
- *   1. The queue returns no message CONTENT. The privacy line is the feature.
+ *   1. No endpoint returns a message somebody SENT — but the escalations view
+ *      does return the complaint somebody WROTE for moderation to read. The
+ *      line is between those two, not around all free text, and the first
+ *      version of this module drew it in the wrong place.
  *   2. A catalogue edit grants NOBODY entitlement. spec §5.10 is the whole
  *      reason payment handling is not in this codebase, and a plan-management
  *      endpoint is the obvious place for that rule to be lost.
@@ -77,32 +87,80 @@ describe('moderation queue', () => {
     expect(sources).toEqual(['flag', 'report']);
   });
 
-  it('never returns the reported content', async () => {
+  /**
+   * THE PRIVACY LINE, stated precisely, because an earlier version of this
+   * module drew it in the wrong place.
+   *
+   * What no admin endpoint may return is a message somebody SENT. A complaint
+   * somebody WROTE in order to be read by moderation is the opposite case, and
+   * the shipped `/reports/review` has always returned it alongside the
+   * reporter's identity — so withholding it here was an inconsistency dressed
+   * up as a safeguard, and it left the escalations view unbuildable.
+   */
+  it('never returns a message somebody sent', async () => {
+    const admin = await administrator();
+    const [a, b] = [await createUserWithProfile(), await createUserWithProfile()];
+
+    const match = await createMatch(a.user.id, b.user.id, 'dating');
+    const conversation = await createConversation(match.id, 'dating');
+    await createMessage(conversation.id, a.user.id, 'my bank details are 1234');
+
+    await prisma.report.create({
+      data: {
+        reporter_id: b.user.id,
+        reported_id: a.user.id,
+        reason: 'spam_scam',
+        context_type: 'message',
+        context_id: conversation.id,
+        description: 'He asked me to move the conversation off the app.',
+      },
+    });
+
+    const queue = await api.get(`${ADMIN}/moderation/queue`).set(authHeader(admin.tokens));
+    const escalations = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(admin.tokens));
+
+    expect(queue.status).toBe(200);
+    expect(escalations.status).toBe(200);
+
+    // Asserted against the whole serialised body rather than a named field, so
+    // adding a field that leaks it fails here rather than shipping.
+    for (const response of [queue, escalations]) {
+      expect(JSON.stringify(response.body)).not.toContain('bank details');
+    }
+  });
+
+  it('keeps the queue list lean and puts the description on escalations', async () => {
     const admin = await administrator();
     const reporter = await createUser();
     const offender = await createUser();
 
-    const secret = 'send me three hundred pounds in bitcoin';
+    const complaint = 'Repeated external payment links across conversations.';
 
     await prisma.report.create({
       data: {
         reporter_id: reporter.id,
         reported_id: offender.id,
         reason: 'spam_scam',
-        context_type: 'message',
-        // The report row itself may carry the reporter's description. The
-        // QUEUE must not hand it out, because the queue is the list every
-        // operator opens all day with no reason recorded for any row.
-        description: secret,
+        description: complaint,
       },
     });
 
-    const response = await api.get(`${ADMIN}/moderation/queue`).set(authHeader(admin.tokens));
+    const queue = await api.get(`${ADMIN}/moderation/queue`).set(authHeader(admin.tokens));
 
-    expect(response.status).toBe(200);
-    // Asserted against the whole serialised body rather than a named field, so
-    // adding a field that leaks it fails here rather than shipping.
-    expect(JSON.stringify(response.body)).not.toContain('bitcoin');
+    // A list of thirty rows does not need thirty paragraphs of free text; the
+    // panel's queue type has no field for it either.
+    expect(JSON.stringify(queue.body)).not.toContain(complaint);
+
+    const escalations = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(admin.tokens));
+
+    // But the case view must have it. A reviewer holding a name and an enum
+    // cannot make a decision, which is the whole point of the screen.
+    expect(escalations.body.data.cases).toHaveLength(1);
+    expect(escalations.body.data.cases[0].description).toBe(complaint);
   });
 
   it('folds critical severity up into High rather than dropping it', async () => {
@@ -663,5 +721,136 @@ describe('analytics', () => {
     const response = await api.get(`${ADMIN}/analytics`).set(authHeader(staff.tokens));
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe('moderation escalations', () => {
+  it('orders by severity first, then oldest within the band', async () => {
+    const admin = await administrator();
+    const reporter = await createUser();
+    const high = await createUser();
+    const medium = await createUser();
+
+    // The Medium is OLDER, so a plain oldest-first ordering would put it on
+    // top and bury the High — the failure this ordering exists to prevent.
+    await prisma.report.create({
+      data: {
+        reporter_id: reporter.id,
+        reported_id: medium.id,
+        reason: 'spam_scam',
+        created_at: new Date('2026-01-01T00:00:00Z'),
+      },
+    });
+
+    await prisma.report.create({
+      data: {
+        reporter_id: reporter.id,
+        reported_id: high.id,
+        reason: 'safety_concern',
+        created_at: new Date('2026-06-01T00:00:00Z'),
+      },
+    });
+
+    const response = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(admin.tokens));
+
+    expect(response.status).toBe(200);
+    const cases = response.body.data.cases as { severity: string; userId: string }[];
+
+    expect(cases[0]!.severity).toBe('High');
+    expect(cases[0]!.userId).toBe(high.id);
+    expect(cases[1]!.severity).toBe('Medium');
+  });
+
+  it('excludes Low severity entirely', async () => {
+    const admin = await administrator();
+    const reporter = await createUser();
+    const offender = await createUser();
+
+    // `fake_profile` infers to Low. Padding a priority list with cases that
+    // can wait turns it into the ordinary queue with a different title.
+    await prisma.report.create({
+      data: { reporter_id: reporter.id, reported_id: offender.id, reason: 'fake_profile' },
+    });
+
+    const response = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(admin.tokens));
+
+    expect(response.body.data.cases).toEqual([]);
+  });
+
+  it('gives an automated flag a null description rather than an invented one', async () => {
+    const admin = await administrator();
+    const offender = await createUser();
+
+    await prisma.moderationFlag.create({
+      data: {
+        subject_type: 'user',
+        subject_id: offender.id,
+        reason: 'scam_language',
+        severity: 'critical',
+      },
+    });
+
+    const response = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(admin.tokens));
+
+    const flagCase = response.body.data.cases[0];
+
+    expect(flagCase.source).toBe('flag');
+    // A generated sentence reads to a reviewer exactly like something a person
+    // wrote, and they would weigh it as evidence.
+    expect(flagCase.description).toBeNull();
+    // `critical` folds up into High here too, not dropped for being off-scale.
+    expect(flagCase.severity).toBe('High');
+  });
+
+  it('ignores resolved cases and refuses without the permission', async () => {
+    const admin = await administrator();
+    const reporter = await createUser();
+    const offender = await createUser();
+
+    await prisma.report.create({
+      data: {
+        reporter_id: reporter.id,
+        reported_id: offender.id,
+        reason: 'harassment',
+        status: 'actioned',
+        reviewed_at: new Date(),
+      },
+    });
+
+    const judged = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(admin.tokens));
+
+    // A judged report must not sit in the escalation list for ever.
+    expect(judged.body.data.cases).toEqual([]);
+
+    const analystRole = await prisma.adminRole.findUniqueOrThrow({ where: { key: 'analyst' } });
+    const staff = await createAuthenticatedUser({ role: 'moderator' });
+
+    await prisma.adminRoleMember.create({
+      data: { user_id: staff.user_id, role_id: analystRole.id },
+    });
+
+    const refused = await api
+      .get(`${ADMIN}/moderation/escalations`)
+      .set(authHeader(staff.tokens));
+
+    expect(refused.status).toBe(403);
+  });
+
+  it('validates the limit', async () => {
+    const admin = await administrator();
+
+    const response = await api
+      .get(`${ADMIN}/moderation/escalations?limit=500`)
+      .set(authHeader(admin.tokens));
+
+    expect(response.status).toBe(400);
   });
 });

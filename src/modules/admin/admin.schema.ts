@@ -363,3 +363,18 @@ export const createVenueSchema = z
   .strict();
 
 export type CreateVenueBody = z.infer<typeof createVenueSchema>;
+
+/**
+ * The escalations tab takes a plain limit, not a cursor.
+ *
+ * It is a priority view, not a list to walk: ordered by severity first, it is
+ * read top-down and acted on. Paginating it would invite someone to page past
+ * the High band into the Mediums, which is the opposite of its purpose.
+ */
+export const escalationsQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).optional().default(25),
+  })
+  .strict();
+
+export type EscalationsQuery = z.infer<typeof escalationsQuerySchema>;

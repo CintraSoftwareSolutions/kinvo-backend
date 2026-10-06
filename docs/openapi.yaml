@@ -12684,6 +12684,97 @@ paths:
                   code: INTERNAL_ERROR
                   message: Something went wrong on our end.
                   details: null
+  /api/v1/admin/moderation/escalations:
+    get:
+      tags:
+        - Admin
+      summary: Cases that cannot wait
+      description: "Open reports and unresolved flags at High or Medium, ordered by
+        SEVERITY FIRST and oldest within each band — the one list in the admin
+        surface that is not purely oldest-first, because a priority view whose
+        top row is a week-old Medium while a High waits below it is not a
+        priority view. `Low` is excluded by construction rather than filtered
+        late, so `limit` means the same thing on every call. Takes a plain limit
+        and no cursor: it is read top-down and acted on, and paginating it would
+        invite someone to page past the High band. Unlike the queue list this
+        RETURNS the reporter’s own `description`, and the distinction is the
+        real privacy line: no admin endpoint returns a message somebody SENT,
+        but a complaint written in order to be read by moderation is the
+        opposite case — withholding it leaves a reviewer with a name and an
+        enum, and the shipped /reports/review has always returned it alongside
+        the reporter’s identity. An automated flag carries `description: null`,
+        never a generated sentence, because an invented one reads to a reviewer
+        exactly like something a person wrote."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: VALIDATION_FAILED — Some fields need attention.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: Some fields need attention.
+                  details: null
+        "401":
+          description: AUTH_TOKEN_INVALID — Your session is no longer valid. Please sign
+            in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: AUTH_TOKEN_INVALID
+                  message: Your session is no longer valid. Please sign in again.
+                  details: null
+        "403":
+          description: FORBIDDEN — You do not have access to this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: FORBIDDEN
+                  message: You do not have access to this.
+                  details: null
+        "429":
+          description: RATE_LIMITED — Too many requests. Please try again shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Please try again shortly.
+                  details: null
+        "500":
+          description: INTERNAL_ERROR — Something went wrong on our end.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Something went wrong on our end.
+                  details: null
   /api/v1/admin/moderation/insights:
     get:
       tags:

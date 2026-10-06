@@ -1616,6 +1616,16 @@ export const ROUTES: RouteDoc[] = [
   },
   {
     method: 'get',
+    path: '/admin/moderation/escalations',
+    tag: 'Admin',
+    summary: 'Cases that cannot wait',
+    description:
+      'Open reports and unresolved flags at High or Medium, ordered by SEVERITY FIRST and oldest within each band — the one list in the admin surface that is not purely oldest-first, because a priority view whose top row is a week-old Medium while a High waits below it is not a priority view. `Low` is excluded by construction rather than filtered late, so `limit` means the same thing on every call. Takes a plain limit and no cursor: it is read top-down and acted on, and paginating it would invite someone to page past the High band. Unlike the queue list this RETURNS the reporter’s own `description`, and the distinction is the real privacy line: no admin endpoint returns a message somebody SENT, but a complaint written in order to be read by moderation is the opposite case — withholding it leaves a reviewer with a name and an enum, and the shipped /reports/review has always returned it alongside the reporter’s identity. An automated flag carries `description: null`, never a generated sentence, because an invented one reads to a reviewer exactly like something a person wrote.',
+    auth: true,
+    errors: [E.FORBIDDEN, E.VALIDATION_FAILED],
+  },
+  {
+    method: 'get',
     path: '/admin/moderation/insights',
     tag: 'Admin',
     summary: 'Queue health and load',

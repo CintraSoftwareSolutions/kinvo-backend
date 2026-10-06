@@ -14,6 +14,7 @@ import {
   auditLogQuerySchema,
   createRoleSchema,
   createVenueSchema,
+  escalationsQuerySchema,
   flagIdParamSchema,
   guardrailKeyParamSchema,
   listUsersQuerySchema,
@@ -247,6 +248,21 @@ adminRouter.get(
   requirePermission(ADMIN_PERMISSIONS.MODERATION_READ),
   validate({ query: moderationQueueQuerySchema }),
   asyncHandler(controller.getModerationQueue),
+);
+
+/**
+ * The cases that cannot wait, severity first.
+ *
+ * Returns the reporter's own description, unlike the queue list. That is the
+ * right line and worth stating: no admin endpoint returns a message somebody
+ * SENT, but a complaint somebody wrote in order to be read by moderation is
+ * the opposite case — and `/reports/review` has always returned it.
+ */
+adminRouter.get(
+  '/moderation/escalations',
+  requirePermission(ADMIN_PERMISSIONS.MODERATION_READ),
+  validate({ query: escalationsQuerySchema }),
+  asyncHandler(controller.getModerationEscalations),
 );
 
 adminRouter.get(

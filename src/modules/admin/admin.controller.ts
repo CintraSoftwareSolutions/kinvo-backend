@@ -23,6 +23,7 @@ import type {
   AuditLogQuery,
   CreateRoleBody,
   CreateVenueBody,
+  EscalationsQuery,
   ListUsersQuery,
   ListVenuesQuery,
   ModerationQueueQuery,
@@ -380,4 +381,12 @@ export async function createVenue(req: Request, res: Response): Promise<void> {
   });
 
   sendSuccess(res, { venue }, 201);
+}
+
+export async function getModerationEscalations(req: Request, res: Response): Promise<void> {
+  const { limit } = req.query as unknown as EscalationsQuery;
+
+  const cases = await contentService.moderationEscalations(limit);
+
+  sendSuccess(res, { cases });
 }
