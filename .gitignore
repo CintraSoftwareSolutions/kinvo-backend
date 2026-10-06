@@ -28,8 +28,3 @@ uploads/
 # Admin panel screenshots — reference only, see admin-ui/README.md
 admin-ui/
 !admin-ui/README.md
-
-# Admin panel UI, kept here only as a reference for building its API.
-# A separate project with its own repository — it must never be committed into
-# the backend, and its node_modules would dwarf this one.
-admin panel frontend code/
