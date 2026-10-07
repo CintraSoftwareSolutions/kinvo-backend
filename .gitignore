@@ -28,3 +28,8 @@ uploads/
 # Admin panel screenshots — reference only, see admin-ui/README.md
 admin-ui/
 !admin-ui/README.md
+
+# Handover brief for the admin panel integration. Kept local on purpose:
+# it is an internal document, not part of the API, and it names the deployed
+# host and the operational state of the running instance.
+ADMIN_PANEL_INTEGRATION.md
