@@ -37,6 +37,18 @@ RUN npm ci --ignore-scripts \
 
 COPY src ./src
 
+# Operational scripts, in the BUILDER only.
+#
+# This stage keeps devDependencies, so it is the one image on the instance that
+# can run `tsx` — which is why migrations already run from here rather than from
+# the runtime image. `scripts/make-admin.ts` is how the first administrator is
+# created, and without this COPY it is absent from every image and the documented
+# bootstrap fails with "file not found" on a box with no other way to run it.
+#
+# Deliberately NOT copied into the runtime stage: nothing that faces the internet
+# needs a script that grants the most privileged role in the product.
+COPY scripts ./scripts
+
 RUN npm run build
 
 # ---------------------------------------------------------------------------
